@@ -47,6 +47,8 @@ from monai.losses import (
 from monai.data import DataLoader, Dataset, CacheDataset
 from monai.config import KeysCollection
 import matplotlib.pyplot as plt
+import platform
+import math
 # import test_network2
 # import test_network
 ################
@@ -78,7 +80,7 @@ parser.add_argument('-d', '--device_no',
 parser.add_argument('-e', '--epochs',
                     type=int,
                     help='number of training epochs',
-                    default=150)
+                    default=5)
 
 parser.add_argument('-n', '--network_type',
                     type=str,
@@ -98,29 +100,23 @@ net = 'Generator'
 use_last_pretrained = False
 current_epoch = 0
 
-
-
 args = parser.parse_args()
 device_no = args.device_no
 device = torch.device("cuda:{}".format(device_no))
 
 num_epochs = args.epochs
+print('target training epoches is {}'.format(num_epochs))
 print('start device {}'.format(device))
 
-# training_progress = np.zeros((epochs, 4))
-# training_progress_new = []
-
-
-
-
-# fan_mask = cv2.imread('data/avg_img.png', 0)
-
-# normalize_dof = True
-# dof_stats = np.loadtxt('infos/dof_stats.txt')
-
-
-
-
+project_dir = os.getcwd()
+output_dir = os.path.join(project_dir, "src/outputs")
+print(output_dir)
+now = datetime.now()
+now_str = now.strftime('%m%d_%H%M%S')
+print('now_str: {}'.format(now_str))
+# create saving file
+file = open(os.path.join(output_dir, '{}.txt'.format(now_str)), 'w')
+file.close()
 
 def data_transform(input_img, crop_size=224, resize=224, normalize=False, masked_full=False):
     """
@@ -457,14 +453,13 @@ def save_info():
     print('Information has been saved!')
 
 def update_info(best_epoch, current_epoch, lowest_val_TRE):
-    readFile = open('E:/PROGRAM/Project_PhD/Registration/Deepcode/FVR-Net/outputs/models/{}.txt'.format(now_str))
-    lines = readFile.readlines()
-    readFile.close()
+    # readFile = open(os.path.join(output_dir, '{}.txt'.format(now_str)), "w")
+    # lines = readFile.readlines()
+    # readFile.close()
 
-    file = open('E:/PROGRAM/Project_PhD/Registration/Deepcode/FVR-Net/outputs/models/{}.txt'.format(now_str), 'w')
-    file.writelines([item for item in lines[:-2]])
+    file = open(os.path.join(output_dir, '{}.txt'.format(now_str)), 'a')
     file.write('Best_epoch: {}/{}\n'.format(best_epoch, current_epoch))
-    file.write('Val_loss: {:.4f}'.format(lowest_val_TRE))
+    file.write('Val_loss: {:.4f}\n'.format(lowest_val_TRE))
     file.close()
     print('Info updated in {}!'.format(now_str))
 
@@ -491,35 +486,47 @@ def ConvertNumpyArray2ITKTransform(transform_array):
 
 def CreateLookupTable(cases_metadata, project_dir, phase = 'train', save_flag = True):
 
-    project_src_dir = project_dir + "\src"
-    project_data_dir = project_dir + "\data"
-    if phase == 'train':
-        dataset_dict_fileNAME = os.path.join(project_src_dir, "training_dataset_dict.xml")
-        volume_dict_fileNAME = os.path.join(project_src_dir, "training_volume_dict.xml")
-    elif phase == 'val':
-        dataset_dict_fileNAME = os.path.join(project_src_dir, "validation_dataset_dict.xml")
-        volume_dict_fileNAME = os.path.join(project_src_dir, "validation_volume_dict.xml")
-    elif phase == 'test':
-        dataset_dict_fileNAME = os.path.join(project_src_dir, "test_dataset_dict.xml")
-        volume_dict_fileNAME = os.path.join(project_src_dir, "test_volume_dict.xml")
-    else:
-        dataset_dict_fileNAME = os.path.join(project_src_dir, phase + "_dataset_dict.xml")
-        volume_dict_fileNAME = os.path.join(project_src_dir, phase + "_volume_dict.xml")
+    project_src_dir = os.path.join(project_dir, "src")
+    project_data_dir = os.path.join(project_dir, "data")
+    if platform.system() == "Linux":
+        if phase == 'train':
+            dataset_dict_fileNAME = os.path.join(project_src_dir, "training_dataset_dict.xml")
+            volume_dict_fileNAME = os.path.join(project_src_dir, "training_volume_dict.xml")
+        elif phase == 'val':
+            dataset_dict_fileNAME = os.path.join(project_src_dir, "validation_dataset_dict.xml")
+            volume_dict_fileNAME = os.path.join(project_src_dir, "validation_volume_dict.xml")
+        elif phase == 'test':
+            dataset_dict_fileNAME = os.path.join(project_src_dir, "test_dataset_dict.xml")
+            volume_dict_fileNAME = os.path.join(project_src_dir, "test_volume_dict.xml")
+        else:
+            dataset_dict_fileNAME = os.path.join(project_src_dir, phase + "_dataset_dict.xml")
+            volume_dict_fileNAME = os.path.join(project_src_dir, phase + "_volume_dict.xml")
+        dataset_dict_fileNAME = '/'.join(dataset_dict_fileNAME.split('\\'))
+        volume_dict_fileNAME = '/'.join(volume_dict_fileNAME.split('\\'))
 
     num_of_cases = len(cases_metadata) # number of volumes
     alldataset_LUT = []
     volume_LUT = []
     for case_index in range(0, num_of_cases):
-        case_tree = ET.parse(os.path.join(project_data_dir, cases_metadata[case_index].text))
+        path = os.path.join(project_data_dir, cases_metadata[case_index].text)
+        if platform.system() == 'Linux':
+            path = '/'.join(path.split('\\'))
+        case_tree = ET.parse(path)
         case_root = case_tree.getroot()
 
         # get the volume name (moving image)
         moving_image_metadata = case_root.find('moving_image')
-        moving_image_fileNAME = os.path.join(project_data_dir, moving_image_metadata.find('directory').text, moving_image_metadata.find('name_raw_US_volume').text) 
+        moving_image_fileNAME = os.path.join(project_data_dir, moving_image_metadata.find('directory').text, moving_image_metadata.find('name_raw_US_volume').text)
+        if platform.system() == 'Linux':
+            moving_image_fileNAME = '/'.join(moving_image_fileNAME.split('\\'))
+        
 
         # get the mask of volume (moving image)
         moving_image_mask_metadata = case_root.find('moving_image_mask')
-        moving_image_mask_fileNAME = os.path.join(project_data_dir, moving_image_mask_metadata.find('directory').text, moving_image_mask_metadata.find('name_rawdata').text) 
+        moving_image_mask_fileNAME = os.path.join(project_data_dir, moving_image_mask_metadata.find('directory').text, moving_image_mask_metadata.find('name_rawdata').text)
+        if platform.system() == 'Linux':
+            moving_image_mask_fileNAME = '/'.join(moving_image_mask_fileNAME.split('\\'))
+        
 
         # get the fixed image
         fixed_images_metadata = case_root.find('fixed_image')
@@ -529,12 +536,18 @@ def CreateLookupTable(cases_metadata, project_dir, phase = 'train', save_flag = 
         # get the mask of fixed image
         fixed_image_mask_metadata = case_root.find('fixed_image_mask')
         fixed_image_mask_fileNAME = os.path.join(project_data_dir, fixed_image_mask_metadata.find('directory').text, fixed_image_mask_metadata.find('name').text)
+        if platform.system() == 'Linux':
+            fixed_image_mask_fileNAME = '/'.join(fixed_image_mask_fileNAME.split('\\'))
+        
 
         volume_case_dict = {'volume_ID': case_index,'volume_name': moving_image_fileNAME, "volume_mask_name": moving_image_mask_fileNAME}
         volume_LUT.append(volume_case_dict)
         # get the transform (3DUS to CT/MRI)
         tfm_3DUS_CT_metadata = case_root.find('transform_3DUS_CT')
         tfm_3DUS_CT_fileNAME = os.path.join(project_data_dir, tfm_3DUS_CT_metadata.find('directory').text, tfm_3DUS_CT_metadata.find('name').text)
+        if platform.system() == 'Linux':
+            tfm_3DUS_CT_fileNAME = '/'.join(tfm_3DUS_CT_fileNAME.split('\\'))
+
         
         # get the frame flip flag
         US_image_setting_metadata = case_root.find('US_image_setting')
@@ -558,11 +571,16 @@ def CreateLookupTable(cases_metadata, project_dir, phase = 'train', save_flag = 
             # get the fixed image filename
             fixed_image_filename = "Image_" + full_frame_index + ".mha"
             fixed_image_fileNAME = os.path.join(project_data_dir, fixed_images_metadata.find('directory').text, fixed_image_filename) 
-            
+            if platform.system() == 'Linux':
+                fixed_image_fileNAME = '/'.join(fixed_image_fileNAME.split('\\'))
+
             initial_frame_name = "initial_"+ full_frame_index + ".tfm"
             correction_frame_name = "correction_" + full_frame_index+ ".tfm"
             tfm_RegS2V_initial_fileNAME = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('initial_folder').text, initial_frame_name)
             tfm_RegS2V_correction_fileNAME = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('correction_folder').text, correction_frame_name)
+            if platform.system() == 'Linux':
+                tfm_RegS2V_initial_fileNAME = '/'.join(tfm_RegS2V_initial_fileNAME.split('\\'))
+                tfm_RegS2V_correction_fileNAME = '/'.join(tfm_RegS2V_correction_fileNAME.split('\\'))
 
             if frame_index == rangeMin:
                 # fixed_image_fileNAME_pre = fixed_image_fileNAME
@@ -584,6 +602,8 @@ def CreateLookupTable(cases_metadata, project_dir, phase = 'train', save_flag = 
 
                 correction_frame_name = "correction_" + full_frame_index_pre+ ".tfm"
                 tfm_RegS2V_correction_fileNAME_pre = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('correction_folder').text, correction_frame_name)
+                if platform.system() == 'Linux':
+                    tfm_RegS2V_correction_fileNAME_pre = '/'.join(tfm_RegS2V_correction_fileNAME_pre.split('\\'))
 
                 # case_frame_pair = [case_index, frame_index, frame_index-1]
             # case_dict = {'volume_ID': case_index, 'volume_name': moving_image_fileNAME, "volume_mask_name": moving_image_mask_fileNAME, 
@@ -802,12 +822,9 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
     optimizer = optim.Adam(model.parameters(), lr=lr)
     scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.8)
 
-    now = datetime.now()
-    now_str = now.strftime('%m%d-%H%M%S')
-    print('now_str: {}'.format(now_str))
+    
     # now_str = '150nonorm'
-    project_dir = os.getcwd()
-    output_dir = project_dir + "\src\outputs"
+    
     # output_dir = r"E:\PROGRAM\Project_PhD\Registration\Deepcode\FVR-Net\outputs\models"
     # fn_save = path.join(output_dir, 'RegS2V_best_{}_{}.pth'.format(net, now_str))
     
@@ -831,8 +848,8 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
             if phase == 'train':
                 # scheduler.step()
                 model.train()
-
-                for batch in training_dataloader_2DUS:
+                nth_batch = 0
+                for i, batch in enumerate(training_dataloader_2DUS):
                     """create the batch volume tensor. This way could significantly reduce the computation when preprocessing"""
                     volume_size = training_dataset_volume[0]['volume_name'].shape
                     actual_batch_size = len(batch["volume_ID"])
@@ -892,6 +909,7 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                         """image intensity-based loss (localNCC)"""
                         frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
                         # print("frame_estimated shape: ", frame_estimated.shape)
+                        
 
                         frame_tensor_4d = frame_tensor.squeeze(2)
                         # print("frame_tensor shape: ", frame_tensor.shape)
@@ -899,7 +917,8 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                         for i, frame_flip_flag in enumerate(batch["frame_flip_flag"]):
                             if frame_flip_flag == "True":
                                 frame_tensor_gt[i, :, :, :] = torch.flip(frame_tensor_4d[i, :, :, :], [2])
-                        frame_tensor_gt.type(torch.FloatTensor).to(device)
+                        frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
+                        
                         ##############################################################
                         # """visualize image (tested)"""
                         # frame_gt_np = torch.Tensor.numpy(frame_tensor.detach().cpu())
@@ -938,7 +957,10 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                     # sys.exit()
                     running_loss += loss_combined * actual_batch_size
                     running_localNCC += image_localNCC_loss*actual_batch_size
-                    running_dof += (rotation_loss + translation_loss)*actual_batch_size  
+                    running_dof += (rotation_loss + translation_loss)*actual_batch_size
+                    nth_batch += 1
+
+                    print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/2), loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
                 
                 scheduler.step()
                 # sys.exit()
@@ -947,6 +969,7 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                 epoch_running_dof = running_dof/num_cases[phase]
                 tv_hist[phase].append([float(epoch_loss), float(epoch_running_localNCC), float(epoch_running_dof)])
                 # print('tv_hist\n{}'.format(tv_hist))
+                
             else:
                 model.eval()
 
@@ -997,7 +1020,7 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
 
                         """image intensity-based loss (localNCC)"""
                         frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
-                        # print("frame_estimated shape: ", frame_estimated.shape)
+                       
 
                         frame_tensor_4d = frame_tensor.squeeze(2)
                         # print("frame_tensor shape: ", frame_tensor.shape)
@@ -1005,7 +1028,8 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                         for i, frame_flip_flag in enumerate(batch["frame_flip_flag"]):
                             if frame_flip_flag == "True":
                                 frame_tensor_gt[i, :, :, :] = torch.flip(frame_tensor_4d[i, :, :, :], [2])
-                        frame_tensor_gt.type(torch.FloatTensor).to(device)
+                        frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
+                 
                         ##############################################################
                         # """visualize image (tested)"""
                         # frame_gt_np = torch.Tensor.numpy(frame_tensor.detach().cpu())
@@ -1057,15 +1081,16 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                 if epoch%5 == 0 and epoch != 0:
                     fn_save = path.join(output_dir, 'RegS2V_best_{}_{}.pth'.format(net, epoch))
                     torch.save(model.state_dict(), fn_save)    
-            # sys.exit()    
-            update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss)
-            print('{}/{}: Train: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof), Validation: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof)'.format(
-                epoch + 1, num_epochs,
-                tv_hist['train'][-1][0],tv_hist['train'][-1][1], tv_hist['train'][-1][2],
-                tv_hist['val'][-1][0], tv_hist['val'][-1][1], tv_hist['val'][-1][2]))
-        sys.exit()
+        # sys.exit()    
+        update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss)
+        print("=========================================================================")
+        print('{}/{}: Train: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof), Validation: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof)'.format(
+            epoch + 1, num_epochs,
+            tv_hist['train'][-1][0],tv_hist['train'][-1][1], tv_hist['train'][-1][2],
+            tv_hist['val'][-1][0], tv_hist['val'][-1][1], tv_hist['val'][-1][2]))
+        print("=========================================================================")
+        # sys.exit()
         
-
     time_elapsed = time.time() - since
     print('*' * 10 + 'Training complete in {:.0f}m {:.0f}s'.format(
         time_elapsed // 60, time_elapsed % 60))
@@ -1079,9 +1104,9 @@ if __name__ == '__main__':
     
     # project_dir = 'E:\PROGRAM\Project_PhD\Registration\DeepRegS2V'
     project_dir = os.getcwd() # Note: direct to the project folder
-    project_src_dir = project_dir + "\src"
-    data_tree_file = os.path.join(project_src_dir, "dataset_index_test.xml")
-
+    data_tree_file = os.path.join(project_dir, "src/dataset_index_test.xml")
+    if platform.system() == 'Linux':
+        data_tree_file = '/'.join(data_tree_file.split('\\'))
     data_tree = ET.parse(data_tree_file)
     root = data_tree.getroot()
     # all_cases_metadata = root.find('all_cases')

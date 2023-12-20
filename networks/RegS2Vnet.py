@@ -588,7 +588,7 @@ class mynet3(nn.Module):
             # print("device: ", device)
             # x_ = torch.zeros((2, 6))
             correction_transform = tools.dof2mat_tensor(input_dof=x).type(torch.FloatTensor).to(device)
-            print('correction_transform: ', correction_transform.device)
+            # print('correction_transform: ', correction_transform.device)
             # print("correction_transform is leaf_variable (guess false): ", correction_transform.is_leaf)
             # print("correction_transform is required_grad (guess True): ", correction_transform.requires_grad)
 

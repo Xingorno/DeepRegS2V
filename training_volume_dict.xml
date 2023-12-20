@@ -2,12 +2,12 @@
 	<volume_cases>
 		<item type="dict">
 			<volume_ID type="int">0</volume_ID>
-			<volume_name type="str">E:\PROGRAM\Project_PhD\Registration\DeepRegS2V\data\LHV\LHV-06\pre06_sweep02\in_moving_volumes\Pre-Ablation_06.mha</volume_name>
-			<volume_mask_name type="str">E:\PROGRAM\Project_PhD\Registration\DeepRegS2V\data\LHV\LHV-06\pre06_sweep02\in_moving_image_mask\moving_image_mask.mha</volume_mask_name>
+			<volume_name type="str">/home/UWO/xshuwei/DeepRegS2V/data/LHV/LHV-06/pre06_sweep02/in_moving_volumes/Pre-Ablation_06.mha</volume_name>
+			<volume_mask_name type="str">/home/UWO/xshuwei/DeepRegS2V/data/LHV/LHV-06/pre06_sweep02/in_moving_image_mask/moving_image_mask.mha</volume_mask_name>
 		</item>
 		<item type="dict">
 			<volume_ID type="int">1</volume_ID>
-			<volume_name type="str">E:\PROGRAM\Project_PhD\Registration\DeepRegS2V\data\LHV\LHV-03\pre04_sweep04\in_moving_volumes\Pre-Ablation_04.mha</volume_name>
-			<volume_mask_name type="str">E:\PROGRAM\Project_PhD\Registration\DeepRegS2V\data\LHV\LHV-03\pre04_sweep04\in_moving_image_mask\moving_image_mask.mha</volume_mask_name>
+			<volume_name type="str">/home/UWO/xshuwei/DeepRegS2V/data/LHV/LHV-03/pre04_sweep04/in_moving_volumes/Pre-Ablation_04.mha</volume_name>
+			<volume_mask_name type="str">/home/UWO/xshuwei/DeepRegS2V/data/LHV/LHV-03/pre04_sweep04/in_moving_image_mask/moving_image_mask.mha</volume_mask_name>
 		</item>
 	</volume_cases>
