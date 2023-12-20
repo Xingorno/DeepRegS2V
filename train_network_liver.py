@@ -1057,13 +1057,13 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                 if epoch%5 == 0 and epoch != 0:
                     fn_save = path.join(output_dir, 'RegS2V_best_{}_{}.pth'.format(net, epoch))
                     torch.save(model.state_dict(), fn_save)    
-            sys.exit()    
+            # sys.exit()    
             update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss)
             print('{}/{}: Train: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof), Validation: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof)'.format(
                 epoch + 1, num_epochs,
                 tv_hist['train'][-1][0],tv_hist['train'][-1][1], tv_hist['train'][-1][2],
                 tv_hist['val'][-1][0], tv_hist['val'][-1][1], tv_hist['val'][-1][2]))
-        # sys.exit()
+        sys.exit()
         
 
     time_elapsed = time.time() - since
