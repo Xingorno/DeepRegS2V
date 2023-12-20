@@ -1,20 +1,20 @@
 # DeepRegS2V
-
+TODO
 
 ## Introduction
-
+TODO
 
 ## Environment
-
+TODO
 
 ## Training
-
+TODO
 
 ## Testing
-TO DO
+TODO
 
 ## Trouble Shooting
-TO DO
+TODO
 
 ## Citation
-TO DO
+TODO
