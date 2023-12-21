@@ -1,0 +1,10 @@
+Best_epoch: 1/1
+Val_loss: 4.5198
+Best_epoch: 2/2
+Val_loss: 1.6033
+Best_epoch: 3/3
+Val_loss: 0.7826
+Best_epoch: 4/4
+Val_loss: 0.7397
+Best_epoch: 4/5
+Val_loss: 0.7397

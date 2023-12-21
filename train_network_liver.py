@@ -80,7 +80,7 @@ parser.add_argument('-d', '--device_no',
 parser.add_argument('-e', '--epochs',
                     type=int,
                     help='number of training epochs',
-                    default=5)
+                    default=100)
 
 parser.add_argument('-n', '--network_type',
                     type=str,
@@ -1104,7 +1104,7 @@ if __name__ == '__main__':
     
     # project_dir = 'E:\PROGRAM\Project_PhD\Registration\DeepRegS2V'
     project_dir = os.getcwd() # Note: direct to the project folder
-    data_tree_file = os.path.join(project_dir, "src/dataset_index_test.xml")
+    data_tree_file = os.path.join(project_dir, "src/dataset_index.xml")
     if platform.system() == 'Linux':
         data_tree_file = '/'.join(data_tree_file.split('\\'))
     data_tree = ET.parse(data_tree_file)
