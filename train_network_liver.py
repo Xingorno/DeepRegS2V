@@ -103,7 +103,7 @@ pretrain_model_str = '0213-092230'
 networks3D = ['resnext50', 'resnext101', 'densenet121', 'mynet', 'mynet2', 'p3d',
               'autoencoder', 'uda']
 
-net = 'Generator'
+
 
 use_last_pretrained = False
 current_epoch = 0
@@ -119,10 +119,12 @@ output_dir = os.path.join(project_dir, "src/outputs_featurefusion")
 
 DEEP_MODEL = True
 NONDEEP_MODEL = False
-RESUME_MODEL = False
+RESUME_MODEL = True
+net = 'refine'
 
 print('start device {}'.format(device))
-print(output_dir)
+print("Network training type: {}".format(net))
+print("output directory: {}".format(output_dir))
 print("RESUME_MODEL : {}".format(RESUME_MODEL))
 print('target training epoches: {}'.format(num_epochs))
 print("training batch size: {}".format(batch_size))
@@ -137,28 +139,28 @@ file.close()
 
 
 
-def defineModel(model_type):
-    pretrain_model_str = model_type
+# def defineModel(model_type):
+#     pretrain_model_str = model_type
 
-    if model_type == 'mynet3_50':
-        model_ft = mynet.mynet3(layers=[3, 4, 6, 3])
-    elif model_type == 'mynet3_101' or model_type == 'test':
-        model_ft = mynet.mynet3(layers=[3, 4, 23, 3])
-    elif model_type == 'mynet3_150' or 'mynet3_150_l1':
-        model_ft = mynet.mynet3(layers=[3, 8, 36, 3])
-    elif model_type == 'mynet4_150':
-        model_ft = mynet.mynet4()
-    else:
-        print('Network type {} not supported!'.format(model_type))
-        sys.exit()
+#     if model_type == 'mynet3_50':
+#         model_ft = mynet.mynet3(layers=[3, 4, 6, 3])
+#     elif model_type == 'mynet3_101' or model_type == 'test':
+#         model_ft = mynet.mynet3(layers=[3, 4, 23, 3])
+#     elif model_type == 'mynet3_150' or 'mynet3_150_l1':
+#         model_ft = mynet.mynet3(layers=[3, 8, 36, 3])
+#     elif model_type == 'mynet4_150':
+#         model_ft = mynet.mynet4()
+#     else:
+#         print('Network type {} not supported!'.format(model_type))
+#         sys.exit()
     
-    # model_path = path.join(model_folder, '3d_best_Generator_{}.pth'.format(pretrain_model_str))  # 10
-    # model_ft.load_state_dict(torch.load(model_path, map_location='cuda:0'))
-    model_ft.cuda()
-    model_ft.eval()
-    model_ft = model_ft.to(device)
+#     # model_path = path.join(model_folder, '3d_best_Generator_{}.pth'.format(pretrain_model_str))  # 10
+#     # model_ft.load_state_dict(torch.load(model_path, map_location='cuda:0'))
+#     model_ft.cuda()
+#     model_ft.eval()
+#     model_ft = model_ft.to(device)
 
-    return model_ft
+#     return model_ft
 
 
 
@@ -205,13 +207,20 @@ def save_info():
 #     file.close()
 #     print('Info updated in {}!'.format(now_str))
 
-def update_info(best_epoch, current_epoch, lowest_val_TRE, loss_combined, loss_image, loss_dof):
+def update_info(best_epoch, current_epoch, lowest_val_TRE, tv_hist):
     # readFile = open(os.path.join(output_dir, '{}.txt'.format(now_str)), "w")
     # lines = readFile.readlines()
     # readFile.close()
+    
+    loss_combined_train = tv_hist['train'][-1][0]
+    loss_image_train = tv_hist['train'][-1][1]
+    loss_dof_train = tv_hist['train'][-1][2]
+    loss_combined_val = tv_hist['val'][-1][0]
+    loss_image_val = tv_hist['val'][-1][1]
+    loss_dof_val = tv_hist['val'][-1][2]
 
     file = open(os.path.join(output_dir, '{}.txt'.format(now_str)), 'a')
-    file.write('Best_epoch: {}/{}, Val_loss: {:.4f}, loss_combined: {:.4f}, loss_image: {:.4f}, loss_dof: {:.4f}\n'.format(best_epoch, current_epoch, lowest_val_TRE, loss_combined, loss_image, loss_dof))
+    file.write('Best_epoch: {}/{}, Val_loss: {:.4f}, loss_combined_train: {:.4f}, loss_image_train: {:.4f}, loss_dof_train: {:.4f}, loss_combined_val: {:.4f}, loss_image_val: {:.4f}, loss_dof_val: {:.4f}\n'.format(best_epoch, current_epoch, lowest_val_TRE, loss_combined_train, loss_image_train, loss_dof_train, loss_combined_val, loss_image_val, loss_dof_val))
     file.close()
     print('Info updated in {}!'.format(now_str))
 
@@ -858,7 +867,8 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                     fn_save = path.join(output_dir, 'RegS2V_best_{}_{}.pth'.format(net, epoch))
                     torch.save(model.state_dict(), fn_save)    
         # sys.exit()    
-        update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss, loss_combined = tv_hist['train'][-1][0], loss_image = tv_hist['train'][-1][1], loss_dof = tv_hist['train'][-1][2])
+        # update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss, loss_combined = tv_hist['train'][-1][0], loss_image = tv_hist['train'][-1][1], loss_dof = tv_hist['train'][-1][2])
+        update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss, tv_hist=tv_hist)
         print("=========================================================================================================================================")
         print('{}/{}: Train: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof), Validation: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof)'.format(
             epoch + 1, num_epochs,
@@ -884,7 +894,7 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
         print('Learning rate is overwritten to be {}'.format(lr))
     else:
         lr = args.learning_rate
-        print('Learning rate = {}'.format(lr))
+        # print('Learning rate = {}'.format(lr))
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
     scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.8)
@@ -938,7 +948,7 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     
                     # sys.exit()
 
-                    # vol_tensor = vol_tensor.to(device)
+                    vol_tensor = vol_tensor.to(device)
                     # frame_tensor = frame_tensor.to(device)
                     mat_tensor = mat_tensor.to(device)
                     dof_tensor = dof_tensor.to(device)
@@ -963,11 +973,11 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         optimizer.zero_grad()
 
                         """initialized volume"""
-                        # affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor).to(device)
-                        affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor)
+                        affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor).to(device)
+                        # affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor)
                         grid_affine = F.affine_grid(theta= affine_transform_initial[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
                         vol_initialized = F.grid_sample(vol_tensor, grid_affine, align_corners=True)
-                        vol_initialized = vol_initialized.to(device)
+                        # vol_initialized = vol_initialized.to(device)
 
                         # """visualize the initialized images"""
                         # sampled_frame_est = vol_initialized[:,:, int(volume_size[3]*0.5), :, :]
@@ -1030,11 +1040,12 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         # print("image_localNCC_loss: ", image_localNCC_loss)
                         # print("image_localNCC_loss device: ", image_localNCC_loss.device)
                         # coefficients for loss functinos
+                        
                         alpha = 2.0
                         beta = 2.0
                         gamma = 10.0
-                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
-                        
+                        # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        loss_combined = image_localNCC_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
                         # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
                         # print("loss_combined device (guess cuda): ", loss_combined.device)
@@ -1052,7 +1063,9 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     running_dof += (rotation_loss + translation_loss)*actual_batch_size
                     nth_batch += 1
                     torch.cuda.empty_cache()
-                    print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
+                    cur_lr = float(scheduler.get_last_lr()[0])
+                    # print(scheduler.get_last_lr())
+                    print('{}/{}: Train-BATCH (lr = {:.4f}): {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
                 
                 scheduler.step()
                 # sys.exit()
@@ -1081,8 +1094,8 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     dof_tensor = batch["tfm_gt_diff_dof"].type(torch.FloatTensor)
                     
 
-                    # vol_tensor = vol_tensor.to(device)
-                    # frame_tensor = frame_tensor.to(device)
+                    vol_tensor = vol_tensor.to(device)
+                    frame_tensor = frame_tensor.to(device)
                     mat_tensor = mat_tensor.to(device)
                     dof_tensor = dof_tensor.to(device)
 
@@ -1099,11 +1112,11 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     with torch.set_grad_enabled(phase == 'train'):
                         
                         """initialized volume"""
-                        # affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor).to(device)
-                        affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor)
+                        affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor).to(device)
+                        # affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor)
                         grid_affine = F.affine_grid(theta= affine_transform_initial[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
                         vol_initialized = F.grid_sample(vol_tensor, grid_affine, align_corners=True)
-                        vol_initialized = vol_initialized.to(device)
+                        # vol_initialized = vol_initialized.to(device)
                         vol_resampled, dof_estimated = model(vol=vol_initialized, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
                         
                         # """save the vol_resampled""" 
@@ -1157,8 +1170,8 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         alpha = 1.0
                         beta = 2.0
                         gamma = 10.0
-                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
-                        
+                        # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        loss_combined = image_localNCC_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
                         # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
                         # print("loss_combined device (guess cuda): ", loss_combined.device)
@@ -1192,7 +1205,8 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                 
                 torch.cuda.empty_cache()    
         # sys.exit()    
-        update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss, loss_combined = tv_hist['train'][-1][0], loss_image = tv_hist['train'][-1][1], loss_dof = tv_hist['train'][-1][2])
+        # update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss, loss_combined = tv_hist['train'][-1][0], loss_image = tv_hist['train'][-1][1], loss_dof = tv_hist['train'][-1][2])
+        update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss, tv_hist=tv_hist)
         print("=========================================================================================================================================")
         print('{}/{}: Train: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof), Validation: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof)'.format(
             epoch + 1, num_epochs,
@@ -1402,9 +1416,10 @@ if __name__ == '__main__':
         # model = RegS2Vnet.mynet3(layers=[3, 8, 36, 3]).to(device=device)
         model = RegS2Vnet.RegS2Vnet_featurefusion(layers=[3, 3, 8, 3]).to(device=device)
         if RESUME_MODEL:
-            pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_1/", 'RegS2V_best_Generator_30.pth')
+            # pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_1/", 'RegS2V_best_Generator_30.pth') # Yan et al.'s method pretrained model
+            pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_featurefusion/", 'RegS2V_feature_fusion_Generator_10.pth') # Yan et al.'s method pretrained model
             model.load_state_dict(torch.load(pretrained_model, map_location=device))
-            print("RESUME")
+            print("RESUME model: {}".format(pretrained_model))
         # tv_hist = train_model(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
         tv_hist = train_model_initialized(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
         
