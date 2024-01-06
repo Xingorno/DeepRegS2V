@@ -49,6 +49,9 @@ from monai.config import KeysCollection
 import matplotlib.pyplot as plt
 import platform
 import math
+import json
+from utils import loss_functions as loss_F
+from utils import util_plot
 # import test_network2
 # import test_network
 ################
@@ -80,7 +83,12 @@ parser.add_argument('-d', '--device_no',
 parser.add_argument('-e', '--epochs',
                     type=int,
                     help='number of training epochs',
-                    default=100)
+                    default=30)
+
+parser.add_argument('-b', '--batch_size',
+                    type=int,
+                    help='number of batch size',
+                    default=1)
 
 parser.add_argument('-n', '--network_type',
                     type=str,
@@ -103,14 +111,23 @@ current_epoch = 0
 args = parser.parse_args()
 device_no = args.device_no
 device = torch.device("cuda:{}".format(device_no))
-
+batch_size = args.batch_size
 num_epochs = args.epochs
-print('target training epoches is {}'.format(num_epochs))
-print('start device {}'.format(device))
 
 project_dir = os.getcwd()
-output_dir = os.path.join(project_dir, "src/outputs")
+output_dir = os.path.join(project_dir, "src/outputs_featurefusion")
+
+DEEP_MODEL = True
+NONDEEP_MODEL = False
+RESUME_MODEL = False
+
+print('start device {}'.format(device))
 print(output_dir)
+print("RESUME_MODEL : {}".format(RESUME_MODEL))
+print('target training epoches: {}'.format(num_epochs))
+print("training batch size: {}".format(batch_size))
+print("learning rate: {}".format(args.learning_rate))
+
 now = datetime.now()
 now_str = now.strftime('%m%d_%H%M%S')
 print('now_str: {}'.format(now_str))
@@ -118,36 +135,6 @@ print('now_str: {}'.format(now_str))
 file = open(os.path.join(output_dir, '{}.txt'.format(now_str)), 'w')
 file.close()
 
-def data_transform(input_img, crop_size=224, resize=224, normalize=False, masked_full=False):
-    """
-    Crop and resize image as you wish. This function is shared through multiple scripts
-    :param input_img: please input a grey-scale numpy array image
-    :param crop_size: center crop size, make sure do not contain regions beyond fan-shape
-    :param resize: resized size
-    :param normalize: whether normalize the image
-    :return: transformed image
-    """
-    if masked_full:
-        input_img[fan_mask == 0] = 0
-        masked_full_img = input_img[112:412, 59:609]
-        return masked_full_img
-
-    h, w = input_img.shape
-    if crop_size > 480:
-        crop_size = 480
-    x_start = int((h - crop_size) / 2)
-    y_start = int((w - crop_size) / 2)
-
-    patch_img = input_img[x_start:x_start+crop_size, y_start:y_start+crop_size]
-
-    patch_img = cv2.resize(patch_img, (resize, resize))
-    # cv2.imshow('patch', patch_img)
-    # cv2.waitKey(0)
-    if normalize:
-        patch_img = patch_img.astype(np.float64)
-        patch_img = (patch_img - np.min(patch_img)) / (np.max(patch_img) - np.mean(patch_img))
-
-    return patch_img
 
 
 def defineModel(model_type):
@@ -173,16 +160,6 @@ def defineModel(model_type):
 
     return model_ft
 
-# input an image array
-# normalize values to 0-255
-def array_normalize(input_array):
-    max_value = np.max(input_array)
-    min_value = np.min(input_array)
-    # print('max {}, min {}'.format(max_value, min_value))
-    k = 255 / (max_value - min_value)
-    min_array = np.ones_like(input_array) * min_value
-    normalized = k * (input_array - min_array)
-    return normalized
 
 
 def filename_list(dir):
@@ -196,241 +173,6 @@ def filename_list(dir):
         # print(file_path)
     # print(images)
     return images
-
-
-def normalize_volume(input_volume):
-    # print('input_volume shape {}'.format(input_volume.shape))
-    mean = np.mean(input_volume)
-    std = np.std(input_volume)
-
-    normalized_volume = (input_volume - mean) / std
-    # print('normalized shape {}'.format(normalized_volume.shape))
-    # time.sleep(30)
-    return normalized_volume
-
-
-def scale_volume(input_volume, upper_bound=255, lower_bound=0):
-    max_value = np.max(input_volume)
-    min_value = np.min(input_volume)
-
-    k = (upper_bound - lower_bound) / (max_value - min_value)
-    scaled_volume = k * (input_volume - min_value) + lower_bound
-    # print('min of scaled {}'.format(np.min(scaled_volume)))
-    # print('max of scaled {}'.format(np.max(scaled_volume)))
-    return scaled_volume
-
-def chooseFrame(frame_num, mid_ratio=0.5):
-    mid_ratio = 0.5
-    frame_start = int(frame_num * (1 -  mid_ratio) // 2)
-    frame_end = int(frame_num * (1 + mid_ratio) // 2)
-    # print('start {}, end {}'.format(frame_start, frame_end))
-    random_id = random.randint(frame_start, frame_end) - 1
-    # print(random_id)
-
-    return random_id
-
-
-
-def get_dist_loss(labels, outputs, start_params, calib_mat):
-    # print('labels shape {}'.format(labels.shape))
-    # print('outputs shape {}'.format(outputs.shape))
-    # print('start_params shape {}'.format(start_params.shape))
-    # print('calib_mat shape {}'.format(calib_mat.shape))
-
-    # print('labels_before\n{}'.format(labels.shape))
-    labels = labels.data.cpu().numpy()
-    outputs = outputs.data.cpu().numpy()
-    if normalize_dof:
-        labels = labels / dof_stats[:, 1] + dof_stats[:, 0]
-        outputs = outputs / dof_stats[:, 1] + dof_stats[:, 0]
-
-
-    start_params = start_params.data.cpu().numpy()
-    calib_mat = calib_mat.data.cpu().numpy()
-
-    if args.output_type == 'sum_dof':
-        batch_errors = []
-        for sample_id in range(labels.shape[0]):
-            gen_param = tools.get_next_pos(trans_params1=start_params[sample_id, :],
-                                           dof=outputs[sample_id, :],
-                                           cam_cali_mat=calib_mat[sample_id, :, :])
-            gt_param = tools.get_next_pos(trans_params1=start_params[sample_id, :],
-                                          dof=labels[sample_id, :],
-                                          cam_cali_mat=calib_mat[sample_id, :, :])
-            gen_param = np.expand_dims(gen_param, axis=0)
-            gt_param = np.expand_dims(gt_param, axis=0)
-
-            result_pts = tools.params2corner_pts(params=gen_param, cam_cali_mat=calib_mat[sample_id, :, :])
-            gt_pts = tools.params2corner_pts(params=gt_param, cam_cali_mat=calib_mat[sample_id, :, :])
-
-            sample_error = tools.evaluate_dist(pts1=gt_pts, pts2=result_pts)
-            batch_errors.append(sample_error)
-        batch_errors = np.asarray(batch_errors)
-
-        avg_batch_error = np.asarray(np.mean(batch_errors))
-        error_tensor = torch.tensor(avg_batch_error, requires_grad=True)
-        error_tensor = error_tensor.type(torch.FloatTensor)
-        error_tensor = error_tensor.to(device)
-        error_tensor = error_tensor * 0.99
-        # print('disloss device {}'.format(device))
-        # print(error_tensor)
-        # time.sleep(30)
-        return error_tensor
-
-
-
-
-    if args.output_type == 'average_dof':
-        labels = np.expand_dims(labels, axis=1)
-        labels = np.repeat(labels, args.neighbour_slice - 1, axis=1)
-        outputs = np.expand_dims(outputs, axis=1)
-        outputs = np.repeat(outputs, args.neighbour_slice - 1, axis=1)
-    else:
-        labels = np.reshape(labels, (labels.shape[0], labels.shape[1] // 6, 6))
-        outputs = np.reshape(outputs, (outputs.shape[0], outputs.shape[1] // 6, 6))
-    # print('labels_after\n{}'.format(labels.shape))
-    # print('outputs\n{}'.format(outputs.shape))
-    # time.sleep(30)
-
-    batch_errors = []
-    final_drifts = []
-    for sample_id in range(labels.shape[0]):
-        gen_param_results = []
-        gt_param_results = []
-        for neighbour in range(labels.shape[1]):
-            if neighbour == 0:
-                base_param_gen = start_params[sample_id, :]
-                base_param_gt = start_params[sample_id, :]
-            else:
-                base_param_gen = gen_param_results[neighbour - 1]
-                base_param_gt = gt_param_results[neighbour - 1]
-            gen_dof = outputs[sample_id, neighbour, :]
-            gt_dof = labels[sample_id, neighbour, :]
-            gen_param = tools.get_next_pos(trans_params1=base_param_gen, dof=gen_dof,
-                                           cam_cali_mat=calib_mat[sample_id, :, :])
-            gt_param = tools.get_next_pos(trans_params1=base_param_gt, dof=gt_dof,
-                                          cam_cali_mat=calib_mat[sample_id, :, :])
-            gen_param_results.append(gen_param)
-            gt_param_results.append(gt_param)
-        gen_param_results = np.asarray(gen_param_results)
-        gt_param_results = np.asarray(gt_param_results)
-        # print('gen_param_results shape {}'.format(gen_param_results.shape))
-
-        result_pts = tools.params2corner_pts(params=gen_param_results, cam_cali_mat=calib_mat[sample_id, :, :])
-        gt_pts = tools.params2corner_pts(params=gt_param_results, cam_cali_mat=calib_mat[sample_id, :, :])
-        # print(result_pts.shape, gt_pts.shape)
-        # time.sleep(30)
-
-        results_final_vec = np.mean(result_pts[-1, :, :], axis=0)
-        gt_final_vec = np.mean(gt_pts[-1, :, :], axis=0)
-        final_drift = np.linalg.norm(results_final_vec - gt_final_vec) * 0.2
-        final_drifts.append(final_drift)
-        # print(results_final_vec, gt_final_vec)
-        # print(final_drift)
-        # time.sleep(30)
-
-        sample_error = tools.evaluate_dist(pts1=gt_pts, pts2=result_pts)
-        batch_errors.append(sample_error)
-
-    batch_errors = np.asarray(batch_errors)
-    avg_batch_error = np.asarray(np.mean(batch_errors))
-
-    error_tensor = torch.tensor(avg_batch_error, requires_grad=True)
-    error_tensor = error_tensor.type(torch.FloatTensor)
-    error_tensor = error_tensor.to(device)
-    error_tensor = error_tensor * 0.99
-    # print('disloss device {}'.format(device))
-    # print(error_tensor)
-    # time.sleep(30)
-
-    avg_final_drift = np.asarray(np.mean(np.asarray(final_drifts)))
-    final_drift_tensor = torch.tensor(avg_final_drift, requires_grad=True)
-    final_drift_tensor = final_drift_tensor.type(torch.FloatTensor)
-    final_drift_tensor = final_drift_tensor.to(device)
-    final_drift_tensor = final_drift_tensor * 0.99
-    return error_tensor, final_drift_tensor
-
-
-def get_correlation_loss(labels, outputs):
-    # print('labels shape {}, outputs shape {}'.format(labels.shape, outputs.shape))
-    x = outputs.flatten()
-    y = labels.flatten()
-    # print('x shape {}, y shape {}'.format(x.shape, y.shape))
-    # print('x shape\n{}\ny shape\n{}'.format(x, y))
-    xy = x * y
-    mean_xy = torch.mean(xy)
-    mean_x = torch.mean(x)
-    mean_y = torch.mean(y)
-    cov_xy = mean_xy - mean_x * mean_y
-    # print('xy shape {}'.format(xy.shape))
-    # print('xy {}'.format(xy))
-    # print('mean_xy {}'.format(mean_xy))
-    # print('cov_xy {}'.format(cov_xy))
-
-    var_x = torch.sum((x - mean_x) ** 2 / x.shape[0])
-    var_y = torch.sum((y - mean_y) ** 2 / y.shape[0])
-    # print('var_x {}'.format(var_x))
-
-    corr_xy = cov_xy / (torch.sqrt(var_x * var_y))
-    # print('correlation_xy {}'.format(corr_xy))
-
-    loss = 1 - corr_xy
-    # time.sleep(30)
-    # x = output
-    # y = target
-    #
-    # vx = x - torch.mean(x)
-    # vy = y - torch.mean(y)
-    #
-    # loss = torch.sum(vx * vy) / (torch.sqrt(torch.sum(vx ** 2)) * torch.sqrt(torch.sum(vy ** 2)))
-    # print('correlation loss {}'.format(loss))
-    # time.sleep(30)
-    return loss
-
-
-
-#
-
-# ----- #
-def _get_random_value(r, center, hasSign):
-    randNumber = random.random() * r + center
-
-
-    if hasSign:
-        sign = random.random() > 0.5
-        if sign == False:
-            randNumber *= -1
-
-    return randNumber
-
-
-# ----- #
-def get_array_from_itk_matrix(itk_mat):
-    mat = np.reshape(np.asarray(itk_mat), (3, 3))
-    return mat
-
-
-# ----- #
-def create_transform(aX, aY, aZ, tX, tY, tZ, mat_base=None):
-    if mat_base is None:
-        mat_base = np.identity(3)
-
-    t_all = np.asarray((tX, tY, tZ))
-
-    # Get the transform
-    rotX = sitk.VersorTransform((1, 0, 0), aX / 180.0 * np.pi)
-    matX = get_array_from_itk_matrix(rotX.GetMatrix())
-    #
-    rotY = sitk.VersorTransform((0, 1, 0), aY / 180.0 * np.pi)
-    matY = get_array_from_itk_matrix(rotY.GetMatrix())
-    #
-    rotZ = sitk.VersorTransform((0, 0, 1), aZ / 180.0 * np.pi)
-    matZ = get_array_from_itk_matrix(rotZ.GetMatrix())
-
-    # Apply all the rotations
-    mat_all = matX.dot(matY.dot(matZ.dot(mat_base[:3, :3])))
-
-    return mat_all, t_all
 
 
 
@@ -452,14 +194,24 @@ def save_info():
     file.close()
     print('Information has been saved!')
 
-def update_info(best_epoch, current_epoch, lowest_val_TRE):
+# def update_info(best_epoch, current_epoch, lowest_val_TRE):
+#     # readFile = open(os.path.join(output_dir, '{}.txt'.format(now_str)), "w")
+#     # lines = readFile.readlines()
+#     # readFile.close()
+
+#     file = open(os.path.join(output_dir, '{}.txt'.format(now_str)), 'a')
+#     file.write('Best_epoch: {}/{}\n'.format(best_epoch, current_epoch))
+#     file.write('Val_loss: {:.4f}\n'.format(lowest_val_TRE))
+#     file.close()
+#     print('Info updated in {}!'.format(now_str))
+
+def update_info(best_epoch, current_epoch, lowest_val_TRE, loss_combined, loss_image, loss_dof):
     # readFile = open(os.path.join(output_dir, '{}.txt'.format(now_str)), "w")
     # lines = readFile.readlines()
     # readFile.close()
 
     file = open(os.path.join(output_dir, '{}.txt'.format(now_str)), 'a')
-    file.write('Best_epoch: {}/{}\n'.format(best_epoch, current_epoch))
-    file.write('Val_loss: {:.4f}\n'.format(lowest_val_TRE))
+    file.write('Best_epoch: {}/{}, Val_loss: {:.4f}, loss_combined: {:.4f}, loss_image: {:.4f}, loss_dof: {:.4f}\n'.format(best_epoch, current_epoch, lowest_val_TRE, loss_combined, loss_image, loss_dof))
     file.close()
     print('Info updated in {}!'.format(now_str))
 
@@ -488,19 +240,21 @@ def CreateLookupTable(cases_metadata, project_dir, phase = 'train', save_flag = 
 
     project_src_dir = os.path.join(project_dir, "src")
     project_data_dir = os.path.join(project_dir, "data")
+    
+    if phase == 'train':
+        dataset_dict_fileNAME = os.path.join(project_src_dir, "training_dataset_dict.xml")
+        volume_dict_fileNAME = os.path.join(project_src_dir, "training_volume_dict.xml")
+    elif phase == 'val':
+        dataset_dict_fileNAME = os.path.join(project_src_dir, "validation_dataset_dict.xml")
+        volume_dict_fileNAME = os.path.join(project_src_dir, "validation_volume_dict.xml")
+    elif phase == 'test':
+        dataset_dict_fileNAME = os.path.join(project_src_dir, "test_dataset_dict.xml")
+        volume_dict_fileNAME = os.path.join(project_src_dir, "test_volume_dict.xml")
+    else:
+        dataset_dict_fileNAME = os.path.join(project_src_dir, phase + "_dataset_dict.xml")
+        volume_dict_fileNAME = os.path.join(project_src_dir, phase + "_volume_dict.xml")
+    
     if platform.system() == "Linux":
-        if phase == 'train':
-            dataset_dict_fileNAME = os.path.join(project_src_dir, "training_dataset_dict.xml")
-            volume_dict_fileNAME = os.path.join(project_src_dir, "training_volume_dict.xml")
-        elif phase == 'val':
-            dataset_dict_fileNAME = os.path.join(project_src_dir, "validation_dataset_dict.xml")
-            volume_dict_fileNAME = os.path.join(project_src_dir, "validation_volume_dict.xml")
-        elif phase == 'test':
-            dataset_dict_fileNAME = os.path.join(project_src_dir, "test_dataset_dict.xml")
-            volume_dict_fileNAME = os.path.join(project_src_dir, "test_volume_dict.xml")
-        else:
-            dataset_dict_fileNAME = os.path.join(project_src_dir, phase + "_dataset_dict.xml")
-            volume_dict_fileNAME = os.path.join(project_src_dir, phase + "_volume_dict.xml")
         dataset_dict_fileNAME = '/'.join(dataset_dict_fileNAME.split('\\'))
         volume_dict_fileNAME = '/'.join(volume_dict_fileNAME.split('\\'))
 
@@ -809,8 +563,8 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
     since = time.time()
 
     loss_mse = nn.MSELoss()
-    loss_localNCC = LocalNormalizedCrossCorrelationLoss(spatial_dims=2, kernel_size= 13, kernel_type="rectangular", reduction="mean")
-    
+    # loss_localNCC = LocalNormalizedCrossCorrelationLoss(spatial_dims=2, kernel_size= 13, kernel_type="rectangular", reduction="mean")
+    loss_localNCC = loss_F.LocalNCC(device = device, kernel_size =(71, 71), stride=(1, 1), padding="valid", win_eps= 100)
     if args.training_mode == 'finetune':
         # overwrite the learning rate for finetune
         lr = 5e-6
@@ -849,7 +603,7 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                 # scheduler.step()
                 model.train()
                 nth_batch = 0
-                for i, batch in enumerate(training_dataloader_2DUS):
+                for i, batch in enumerate(training_dataset_frame):
                     """create the batch volume tensor. This way could significantly reduce the computation when preprocessing"""
                     volume_size = training_dataset_volume[0]['volume_name'].shape
                     actual_batch_size = len(batch["volume_ID"])
@@ -878,13 +632,20 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                     mat_tensor.require_grad = True
                     dof_tensor.require_grad = True
 
+                    frame_tensor_gt = torch.zeros((frame_tensor.shape))
+                    for i, frame_flip_flag in enumerate(batch["frame_flip_flag"]):
+                        if frame_flip_flag == "True":
+                            frame_tensor_gt[i, :,:, :, :] = torch.flip(frame_tensor[i, :, :,:, :], [3])
+                        else:
+                            frame_tensor_gt[i, :, :, :,:] = frame_tensor[i,:, :, :, :]
+                    frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
                     # forward
                     # track history if only in train
                     with torch.set_grad_enabled(phase == 'train'):
                         
                         optimizer.zero_grad()
 
-                        vol_resampled, dof_estimated = model(vol=vol_tensor, frame=frame_tensor, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
+                        vol_resampled, dof_estimated = model(vol=vol_tensor, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
                         # print('vol_resampled {}'.format(vol_resampled.shape))
                         # print('dof_estimated {}'.format(dof_estimated))
                         
@@ -911,14 +672,17 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                         # print("frame_estimated shape: ", frame_estimated.shape)
                         
 
-                        frame_tensor_4d = frame_tensor.squeeze(2)
-                        # print("frame_tensor shape: ", frame_tensor.shape)
-                        frame_tensor_gt = torch.zeros((frame_tensor_4d.shape))
-                        for i, frame_flip_flag in enumerate(batch["frame_flip_flag"]):
-                            if frame_flip_flag == "True":
-                                frame_tensor_gt[i, :, :, :] = torch.flip(frame_tensor_4d[i, :, :, :], [2])
-                        frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
-                        
+                        frame_tensor_gt_4d = frame_tensor_gt.squeeze(2)
+                        # # print("frame_tensor shape: ", frame_tensor.shape)
+                        # frame_tensor_gt = torch.zeros((frame_tensor_4d.shape))
+                        # for i, frame_flip_flag in enumerate(batch["frame_flip_flag"]):
+                        #     if frame_flip_flag == "True":
+                        #         frame_tensor_gt[i, :, :, :] = torch.flip(frame_tensor_4d[i, :, :, :], [2])
+                        #     else:
+                        #         frame_tensor_gt[i, :, :, :] = frame_tensor_4d[i, :, :, :]
+
+                        # frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
+                        # print("frame_tensor_gt shape: ", frame_tensor_gt.shape)
                         ##############################################################
                         # """visualize image (tested)"""
                         # frame_gt_np = torch.Tensor.numpy(frame_tensor.detach().cpu())
@@ -935,14 +699,15 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
 
                         # sys.exit()
                         
-                        image_localNCC_loss = loss_localNCC(frame_estimated, frame_tensor_gt)
-
+                        image_localNCC_loss, ROI = loss_localNCC(frame_estimated, frame_tensor_gt_4d)
+                        # print("image_localNCC_loss: ", image_localNCC_loss)
+                        # print("image_localNCC_loss device: ", image_localNCC_loss.device)
                         # coefficients for loss functinos
                         alpha = 1.0
                         beta = 2.0
-                        gamma = 5.0
-                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
-                        
+                        gamma = 10.0
+                        # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        loss_combined = image_localNCC_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
                         # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
                         # print("loss_combined device (guess cuda): ", loss_combined.device)
@@ -960,7 +725,7 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                     running_dof += (rotation_loss + translation_loss)*actual_batch_size
                     nth_batch += 1
 
-                    print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/2), loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
+                    print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
                 
                 scheduler.step()
                 # sys.exit()
@@ -972,8 +737,8 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                 
             else:
                 model.eval()
-
-                for batch in validation_dataloader_2DUS:
+                nth_batch = 0
+                for batch in validation_dataset_frame:
                     """create the batch volume tensor. This way could significantly reduce the computation when preprocessing"""
                     volume_size = validation_dateset_volume[0]['volume_name'].shape
                     actual_batch_size = len(batch["volume_ID"])
@@ -994,12 +759,20 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                     mat_tensor = mat_tensor.to(device)
                     dof_tensor = dof_tensor.to(device)
 
+                    frame_tensor_gt = torch.zeros((frame_tensor.shape))
+                    for i, frame_flip_flag in enumerate(batch["frame_flip_flag"]):
+                        if frame_flip_flag == "True":
+                            frame_tensor_gt[i, :,:, :, :] = torch.flip(frame_tensor[i, :, :,:, :], [3])
+                        else:
+                            frame_tensor_gt[i, :, :, :,:] = frame_tensor[i,:, :, :, :]
+                    frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
+
                     # forward
                     # track history if only in train
                     with torch.set_grad_enabled(phase == 'train'):
                         
                         
-                        vol_resampled, dof_estimated = model(vol=vol_tensor, frame=frame_tensor, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
+                        vol_resampled, dof_estimated = model(vol=vol_tensor, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
                         
                         # """save the vol_resampled""" 
                         # vol_resampled_= torch.permute(vol_resampled.data, (0, 1, 4, 3, 2))
@@ -1022,13 +795,13 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                         frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
                        
 
-                        frame_tensor_4d = frame_tensor.squeeze(2)
-                        # print("frame_tensor shape: ", frame_tensor.shape)
-                        frame_tensor_gt = torch.zeros((frame_tensor_4d.shape))
-                        for i, frame_flip_flag in enumerate(batch["frame_flip_flag"]):
-                            if frame_flip_flag == "True":
-                                frame_tensor_gt[i, :, :, :] = torch.flip(frame_tensor_4d[i, :, :, :], [2])
-                        frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
+                        frame_tensor_gt_4d = frame_tensor_gt.squeeze(2)
+                        # # print("frame_tensor shape: ", frame_tensor.shape)
+                        # frame_tensor_gt = torch.zeros((frame_tensor_4d.shape))
+                        # for i, frame_flip_flag in enumerate(batch["frame_flip_flag"]):
+                        #     if frame_flip_flag == "True":
+                        #         frame_tensor_gt[i, :, :, :] = torch.flip(frame_tensor_4d[i, :, :, :], [2])
+                        # frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
                  
                         ##############################################################
                         # """visualize image (tested)"""
@@ -1046,12 +819,12 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
 
                         # sys.exit()
                         
-                        image_localNCC_loss = loss_localNCC(frame_estimated, frame_tensor_gt)
-
+                        image_localNCC_loss, ROI = loss_localNCC(frame_estimated, frame_tensor_gt_4d)
+                        
                         # coefficients for loss functinos
                         alpha = 1.0
                         beta = 2.0
-                        gamma = 5.0
+                        gamma = 10.0
                         loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
                         
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
@@ -1059,12 +832,15 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                         # print("loss_combined device (guess cuda): ", loss_combined.device)
                         
                         # print("loss_combined: ", loss_combined)
-                            
+                        
                         
                     # sys.exit()
                     running_loss += loss_combined * actual_batch_size
                     running_localNCC += image_localNCC_loss*actual_batch_size
-                    running_dof += (rotation_loss + translation_loss)*actual_batch_size  
+                    running_dof += (rotation_loss + translation_loss)*actual_batch_size
+                    nth_batch += 1 
+                    print('{}/{}: Validation-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
+                 
                 
                 # sys.exit()
                 epoch_loss = running_loss / num_cases[phase]
@@ -1082,13 +858,13 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                     fn_save = path.join(output_dir, 'RegS2V_best_{}_{}.pth'.format(net, epoch))
                     torch.save(model.state_dict(), fn_save)    
         # sys.exit()    
-        update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss)
-        print("=========================================================================")
+        update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss, loss_combined = tv_hist['train'][-1][0], loss_image = tv_hist['train'][-1][1], loss_dof = tv_hist['train'][-1][2])
+        print("=========================================================================================================================================")
         print('{}/{}: Train: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof), Validation: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof)'.format(
             epoch + 1, num_epochs,
             tv_hist['train'][-1][0],tv_hist['train'][-1][1], tv_hist['train'][-1][2],
             tv_hist['val'][-1][0], tv_hist['val'][-1][1], tv_hist['val'][-1][2]))
-        print("=========================================================================")
+        print("=========================================================================================================================================")
         # sys.exit()
         
     time_elapsed = time.time() - since
@@ -1096,6 +872,463 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
         time_elapsed // 60, time_elapsed % 60))
 
     return tv_hist
+
+def train_model_initialized(model, training_dataset_frame, training_dataset_volume, validation_dataset_frame, validation_dateset_volume, num_cases):
+    since = time.time()
+    loss_mse = nn.MSELoss()
+    # loss_localNCC = LocalNormalizedCrossCorrelationLoss(spatial_dims=2, kernel_size= 13, kernel_type="rectangular", reduction="mean")
+    loss_localNCC = loss_F.LocalNCC(device = device, kernel_size =(71, 71), stride=(1, 1), padding="valid", win_eps= 100)
+    if args.training_mode == 'finetune':
+        # overwrite the learning rate for finetune
+        lr = 5e-6
+        print('Learning rate is overwritten to be {}'.format(lr))
+    else:
+        lr = args.learning_rate
+        print('Learning rate = {}'.format(lr))
+
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.8)
+
+    
+    # now_str = '150nonorm'
+    
+    # output_dir = r"E:\PROGRAM\Project_PhD\Registration\Deepcode\FVR-Net\outputs\models"
+    # fn_save = path.join(output_dir, 'RegS2V_best_{}_{}.pth'.format(net, now_str))
+    
+    # num_epochs=25
+    lowest_loss = 2000
+    best_ep = 0
+    tv_hist = {'train': [], 'val': []}
+
+    for epoch in range(num_epochs):
+        # global current_epoch
+        # current_epoch = epoch + 1
+
+        # Each epoch has a training and validation phase
+        for phase in ['train', 'val']:
+            print('Network is in {}...'.format(phase))
+            
+            running_loss = 0.0
+            running_localNCC = 0.0
+            running_dof = 0.0
+
+            if phase == 'train':
+                # scheduler.step()
+                model.train()
+                nth_batch = 0
+                for i, batch in enumerate(training_dataset_frame):
+                    """create the batch volume tensor. This way could significantly reduce the computation when preprocessing"""
+                    volume_size = training_dataset_volume[0]['volume_name'].shape
+                    actual_batch_size = len(batch["volume_ID"])
+                    # vol_tensor = torch.zeros(actual_batch_size, volume_size[0], volume_size[1], volume_size[2], volume_size[3])
+
+                    """converting from N*C*W*H*D to N*C*D*H*W"""
+                    vol_tensor = torch.zeros(actual_batch_size, volume_size[0], volume_size[3], volume_size[2], volume_size[1])
+                    for i, volume_id in enumerate(batch["volume_ID"]):
+                        # print("volume_id: ", volume_id)
+                        vol_tensor[i, :, :, :, :] = torch.permute(training_dataset_volume[volume_id]['volume_name'].type(torch.FloatTensor), (0, 3, 2, 1))   
+                    frame_tensor = torch.permute(batch["frame_name"].type(torch.FloatTensor), (0, 1, 4, 3, 2))
+                    mat_tensor = batch["tfm_gt_diff_mat"].type(torch.FloatTensor)
+                    dof_tensor = batch["tfm_gt_diff_dof"].type(torch.FloatTensor)
+                    
+                    # print('vol_tensor {}'.format(vol_tensor.shape))
+                    # print('frame_tensor {}'.format(frame_tensor.shape))
+                    # print('mat_tensor {}'.format(mat_tensor.shape))
+                    # print('dof_tensor {}'.format(dof_tensor.shape))
+                    
+                    # sys.exit()
+
+                    # vol_tensor = vol_tensor.to(device)
+                    # frame_tensor = frame_tensor.to(device)
+                    mat_tensor = mat_tensor.to(device)
+                    dof_tensor = dof_tensor.to(device)
+                    mat_tensor.require_grad = True
+                    dof_tensor.require_grad = True
+
+                    """normalize the flip of frame image"""
+
+                    frame_tensor_gt = torch.zeros((frame_tensor.shape))
+                    for i, frame_flip_flag in enumerate(batch["frame_flip_flag"]):
+                        if frame_flip_flag == "True":
+                            frame_tensor_gt[i, :,:, :, :] = torch.flip(frame_tensor[i, :, :,:, :], [3])
+                        else:
+                            frame_tensor_gt[i, :, :, :,:] = frame_tensor[i,:, :, :, :]
+                    frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
+
+                    # print("frame_tensor_gt",frame_tensor_gt.shape)
+                    # forward
+                    # track history if only in train
+                    with torch.set_grad_enabled(phase == 'train'):
+                        
+                        optimizer.zero_grad()
+
+                        """initialized volume"""
+                        # affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor).to(device)
+                        affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor)
+                        grid_affine = F.affine_grid(theta= affine_transform_initial[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
+                        vol_initialized = F.grid_sample(vol_tensor, grid_affine, align_corners=True)
+                        vol_initialized = vol_initialized.to(device)
+
+                        # """visualize the initialized images"""
+                        # sampled_frame_est = vol_initialized[:,:, int(volume_size[3]*0.5), :, :]
+                        # sampled_frame_est_np = torch.Tensor.numpy(sampled_frame_est.detach().cpu())
+
+                        # affine_transform_gt = batch['tfm_RegS2V_gt_mat'].type(torch.FloatTensor).to(device)
+                        # grid_affine_gt = F.affine_grid(theta= affine_transform_gt[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
+                        # vol_gt = F.grid_sample(vol_tensor, grid_affine_gt, align_corners=True)
+                        # sampled_frame_gt = vol_gt[:,:, int(volume_size[3]*0.5), :, :]
+                        # sampled_frame_gt_np = torch.Tensor.numpy(sampled_frame_gt.detach().cpu())
+
+                        frame_tensor_gt_4d = frame_tensor_gt.squeeze(2)
+                        # frame_gt_np = torch.Tensor.numpy(frame_tensor_gt_4d.detach().cpu())
+                        # print("frame_gt_np",frame_gt_np.size)
+                        # fig = plt.figure(figsize=(16, 9))
+                        # ax1 = fig.add_subplot(131)
+                        # ax2 = fig.add_subplot(132)
+                        # ax3 = fig.add_subplot(133)
+                        # ax1.imshow(frame_gt_np[0, 0, :, :], cmap = "gray")
+                        # ax1.set_title("US frame (target)")
+                        # ax2.imshow(sampled_frame_est_np[0, 0, :, :], cmap = "gray")
+                        # ax2.set_title("Resampled image (initial)")
+                        # ax3.imshow(sampled_frame_gt_np[0, 0, :, :], cmap = "gray")
+                        # ax3.set_title("Resampled image (gt)")
+                        # plt.show()
+
+                        # sys.exit()
+
+                        vol_resampled, dof_estimated = model(vol=vol_initialized, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
+                        
+                        # sys.exit()
+
+                        """rotation loss (deg)"""
+                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
+                        """translation loss (mm)"""
+                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
+
+                        """image intensity-based loss (localNCC)"""
+                        frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
+                        # print("frame_estimated shape: ", frame_estimated.shape)
+                        
+
+
+                        # """visualize image (tested)"""
+                        # # frame_gt_np = torch.Tensor.numpy(frame_tensor_gt_4d.detach().cpu())
+                        # frame_est_np = torch.Tensor.numpy(frame_estimated.detach().cpu())
+                        # plt.figure("visualize", (12,8))
+                        # plt.subplot(1,2,1)
+                        # plt.title("original image")
+                        # plt.imshow(frame_gt_np[0,0,:,:], cmap="gray")
+
+                        # plt.subplot(1,2,2)
+                        # plt.title("resampled image")
+                        # plt.imshow(frame_est_np[0,0,:,:], cmap="gray")
+                        # plt.show()
+
+                        # sys.exit()
+                        
+                        image_localNCC_loss, ROI = loss_localNCC(frame_estimated, frame_tensor_gt_4d)
+                        # print("image_localNCC_loss: ", image_localNCC_loss)
+                        # print("image_localNCC_loss device: ", image_localNCC_loss.device)
+                        # coefficients for loss functinos
+                        alpha = 2.0
+                        beta = 2.0
+                        gamma = 10.0
+                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        
+                        # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
+                        # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
+                        # print("loss_combined device (guess cuda): ", loss_combined.device)
+                        
+                        # backward + optimize only if in training phase    
+                        loss_combined.backward()
+                        optimizer.step()
+                        
+                        # print("loss_combined: ", loss_combined)
+                            
+                        
+                    # sys.exit()
+                    running_loss += loss_combined * actual_batch_size
+                    running_localNCC += image_localNCC_loss*actual_batch_size
+                    running_dof += (rotation_loss + translation_loss)*actual_batch_size
+                    nth_batch += 1
+                    torch.cuda.empty_cache()
+                    print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
+                
+                scheduler.step()
+                # sys.exit()
+                epoch_loss = running_loss / num_cases[phase]
+                epoch_running_localNCC = running_localNCC/num_cases[phase]
+                epoch_running_dof = running_dof/num_cases[phase]
+                tv_hist[phase].append([float(epoch_loss), float(epoch_running_localNCC), float(epoch_running_dof)])
+                # print('tv_hist\n{}'.format(tv_hist))
+                
+            else:
+                model.eval()
+                nth_batch = 0
+                for batch in validation_dataset_frame:
+                    """create the batch volume tensor. This way could significantly reduce the computation when preprocessing"""
+                    volume_size = validation_dateset_volume[0]['volume_name'].shape
+                    actual_batch_size = len(batch["volume_ID"])
+                    # vol_tensor = torch.zeros(actual_batch_size, volume_size[0], volume_size[1], volume_size[2], volume_size[3])
+
+                    """converting from N*C*W*H*D to N*C*D*H*W"""
+                    vol_tensor = torch.zeros(actual_batch_size, volume_size[0], volume_size[3], volume_size[2], volume_size[1])
+                    for i, volume_id in enumerate(batch["volume_ID"]):
+                        # print("volume_id: ", volume_id)
+                        vol_tensor[i, :, :, :, :] = torch.permute(validation_dateset_volume[volume_id]['volume_name'].type(torch.FloatTensor), (0, 3, 2, 1))   
+                    frame_tensor = torch.permute(batch["frame_name"].type(torch.FloatTensor), (0, 1, 4, 3, 2))
+                    mat_tensor = batch["tfm_gt_diff_mat"].type(torch.FloatTensor)
+                    dof_tensor = batch["tfm_gt_diff_dof"].type(torch.FloatTensor)
+                    
+
+                    # vol_tensor = vol_tensor.to(device)
+                    # frame_tensor = frame_tensor.to(device)
+                    mat_tensor = mat_tensor.to(device)
+                    dof_tensor = dof_tensor.to(device)
+
+                    frame_tensor_gt = torch.zeros((frame_tensor.shape))
+                    for i, frame_flip_flag in enumerate(batch["frame_flip_flag"]):
+                        if frame_flip_flag == "True":
+                            frame_tensor_gt[i, :,:, :, :] = torch.flip(frame_tensor[i, :, :,:, :], [3])
+                        else:
+                            frame_tensor_gt[i, :, :, :,:] = frame_tensor[i,:, :, :, :]
+                    frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
+
+                    # forward
+                    # track history if only in train
+                    with torch.set_grad_enabled(phase == 'train'):
+                        
+                        """initialized volume"""
+                        # affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor).to(device)
+                        affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor)
+                        grid_affine = F.affine_grid(theta= affine_transform_initial[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
+                        vol_initialized = F.grid_sample(vol_tensor, grid_affine, align_corners=True)
+                        vol_initialized = vol_initialized.to(device)
+                        vol_resampled, dof_estimated = model(vol=vol_initialized, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
+                        
+                        # """save the vol_resampled""" 
+                        # vol_resampled_= torch.permute(vol_resampled.data, (0, 1, 4, 3, 2))
+                        # vol_resampled_squeezed = vol_resampled_[0, :, :, :, :].squeeze()
+                        # print('vol_resampled_squeezed shape {}'.format(vol_resampled_squeezed.shape))
+                        # writer = ITKWriter(output_dtype=np.float32, affine_lps_to_ras= False)
+                        # writer.set_data_array(vol_resampled_squeezed, channel_dim=None)
+                        # writer.set_metadata(training_dataset_volume[volume_id]['volume_name'].meta, resample=False)
+                        # output_filename = r"E:\PROGRAM\Project_PhD\Registration\Deepcode\test\Pre-Ablation_01_test.mha"
+                        # writer.write(output_filename)
+
+                        # sys.exit()
+
+                        """rotation loss (deg)"""
+                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
+                        """translation loss (mm)"""
+                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
+
+                        """image intensity-based loss (localNCC)"""
+                        frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
+                       
+
+                        frame_tensor_gt_4d = frame_tensor_gt.squeeze(2)
+                        # # print("frame_tensor shape: ", frame_tensor.shape)
+                        # frame_tensor_gt = torch.zeros((frame_tensor_4d.shape))
+                        # for i, frame_flip_flag in enumerate(batch["frame_flip_flag"]):
+                        #     if frame_flip_flag == "True":
+                        #         frame_tensor_gt[i, :, :, :] = torch.flip(frame_tensor_4d[i, :, :, :], [2])
+                        # frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
+                 
+                        ##############################################################
+                        # """visualize image (tested)"""
+                        # frame_gt_np = torch.Tensor.numpy(frame_tensor.detach().cpu())
+                        # frame_est_np = torch.Tensor.numpy(frame_estimated.detach().cpu())
+                        # plt.figure("visualize", (12,8))
+                        # plt.subplot(1,2,1)
+                        # plt.title("original image")
+                        # plt.imshow(frame_gt_np[0,0,:,:], cmap="gray")
+
+                        # plt.subplot(1,2,2)
+                        # plt.title("resampled image")
+                        # plt.imshow(frame_est_np[0,0,:,:], cmap="gray")
+                        # plt.show()
+
+                        # sys.exit()
+                        
+                        image_localNCC_loss, ROI = loss_localNCC(frame_estimated, frame_tensor_gt_4d)
+                        
+                        # coefficients for loss functinos
+                        alpha = 1.0
+                        beta = 2.0
+                        gamma = 10.0
+                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        
+                        # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
+                        # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
+                        # print("loss_combined device (guess cuda): ", loss_combined.device)
+                        
+                        # print("loss_combined: ", loss_combined)
+                            
+                        
+                    # sys.exit()
+                    running_loss += loss_combined * actual_batch_size
+                    running_localNCC += image_localNCC_loss*actual_batch_size
+                    running_dof += (rotation_loss + translation_loss)*actual_batch_size  
+                    nth_batch += 1
+                    
+                    print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
+                
+                # sys.exit()
+                epoch_loss = running_loss / num_cases[phase]
+                epoch_running_localNCC = running_localNCC/num_cases[phase]
+                epoch_running_dof = running_dof/num_cases[phase]
+                tv_hist[phase].append([float(epoch_loss), float(epoch_running_localNCC), float(epoch_running_dof)])
+                # print('tv_hist\n{}'.format(tv_hist))
+            
+                # deep copy the model
+                if epoch_loss < lowest_loss:
+                    lowest_loss = epoch_loss
+                    best_ep = epoch
+                    print('**** best model updated with loss={:.4f} ****'.format(lowest_loss))
+                if epoch%5 == 0 and epoch != 0:
+                    fn_save = path.join(output_dir, 'RegS2V_feature_fusion_{}_{}.pth'.format(net, epoch))
+                    torch.save(model.state_dict(), fn_save)
+                
+                torch.cuda.empty_cache()    
+        # sys.exit()    
+        update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss, loss_combined = tv_hist['train'][-1][0], loss_image = tv_hist['train'][-1][1], loss_dof = tv_hist['train'][-1][2])
+        print("=========================================================================================================================================")
+        print('{}/{}: Train: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof), Validation: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof)'.format(
+            epoch + 1, num_epochs,
+            tv_hist['train'][-1][0],tv_hist['train'][-1][1], tv_hist['train'][-1][2],
+            tv_hist['val'][-1][0], tv_hist['val'][-1][1], tv_hist['val'][-1][2]))
+        print("=========================================================================================================================================")
+        # sys.exit()
+        
+    time_elapsed = time.time() - since
+    print('*' * 10 + 'Training complete in {:.0f}m {:.0f}s'.format(
+        time_elapsed // 60, time_elapsed % 60))
+
+    return tv_hist
+
+def train_nondeep_model(dataset_frame, dataset_volume, frame_index):
+    
+    """Pre-setting (same as ITK global one)"""
+    lr_localNCC = 0.01
+    num_iters = 100
+    stop_thrld = 1e-4
+
+    """loading volume"""
+    volume = dataset_volume[dataset_frame[frame_index]["volume_ID"]]["volume_name"]
+    volume = volume.unsqueeze(0).type(torch.FloatTensor)
+    volume = torch.permute(volume, (0, 1, 4, 3, 2)).type(torch.FloatTensor)
+    volume = volume.to(device)
+    volume_size = dataset_volume[0]['volume_name'].shape
+    
+    loss_mse = nn.MSELoss()
+    # loss_localNCC = LocalNormalizedCrossCorrelationLoss(spatial_dims=2, kernel_size= 13, kernel_type="rectangular", reduction="mean")
+    loss_localNCC = loss_F.LocalNCC(device = device, kernel_size =(71, 71), stride=(1, 1), padding="valid", win_eps= 100)
+    
+    starting = time.time()
+    """initialize rotation and transaltion vector"""
+    rtvec_est = torch.zeros((1, 6), requires_grad = True, device = device)
+    # print("rtvec_est is leaf_variable (guess True): ", rtvec_est.is_leaf)
+    
+    rtvec_gt = dataset_frame[frame_index]["tfm_gt_diff_dof"].type(torch.FloatTensor)
+    rtvec_gt = rtvec_gt.unsqueeze(0).type(torch.FloatTensor)
+    rtvec_gt = rtvec_gt.to(device)
+    # print("rtvec_gt shape:{}".format(rtvec_gt.shape))
+    # print("rtvec_gt: {}".format(rtvec_gt))
+
+    """loading the initial transformation from (arm tracking + transformaion of 3DUS-CT/MRI)"""
+    initial_transform = dataset_frame[frame_index]["tfm_RegS2V_initial_mat"]
+    affine_transform_initial = initial_transform.type(torch.FloatTensor).to(device)
+    # print(affine_transform_initial.shape)
+    optimizer_nondeep_model = optim.SGD([rtvec_est], lr=lr_localNCC, momentum=0.9)        
+    scheduler_nondeep_model = lr_scheduler.CyclicLR(optimizer_nondeep_model, base_lr=0.001, max_lr=0.003,step_size_up=20)
+    
+    lossLocalNCC_output_list = torch.zeros(1, device=device)
+    lossRot_output_list = torch.zeros(1, device = device)
+    lossTrans_output_list = torch.zeros(1, device = device)
+    
+    for iter in range(num_iters):
+
+        optimizer_nondeep_model.zero_grad()
+
+        """loading frame"""
+        frame_tensor = torch.permute(dataset_frame[frame_index]["frame_name"].type(torch.FloatTensor), (0, 3, 2, 1)).to(device)
+        frame_flip_flag = dataset_frame[frame_index]["frame_flip_flag"]
+        if frame_flip_flag == "True":
+            frame_tensor = torch.flip(frame_tensor, [3])
+        frame_tensor = frame_tensor.type(torch.FloatTensor)
+        
+        """get transformation"""
+        correction_transform = tools.dof2mat_tensor(input_dof=rtvec_est).type(torch.FloatTensor).to(device)
+        affine_transform_combined = torch.matmul(correction_transform, affine_transform_initial)
+        # print(correction_transform.shape)
+        # print(affine_transform_combined.shape)
+        """Resampling and reslicing the volume """
+        grid_affine = F.affine_grid(theta= affine_transform_combined[:, 0:3, :], size = torch.Size([1, 1, volume_size[3], volume_size[2], volume_size[1]]), align_corners=True)
+        
+        """get resampled volume and frame"""
+        vol_resampled = F.grid_sample(volume, grid_affine, align_corners=True)
+        # resampled_image_initial_np = torch.Tensor.numpy(vol_resampled)
+        sampled_frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
+        
+        """rotation loss (deg)"""
+        rotation_loss = loss_mse(rtvec_est[:, 3:], rtvec_gt[:, 3:])
+        """translation loss (mm)"""
+        translation_loss = loss_mse(rtvec_est[:, :3], rtvec_gt[:, :3])
+
+        """image intensity-based loss (localNCC)"""
+        image_localNCC_loss, ROI = loss_localNCC(sampled_frame_estimated, frame_tensor)
+        
+        # loss_combined = image_localNCC_loss
+        
+        rtvec_est.retain_grad()
+        image_localNCC_loss.backward()
+        optimizer_nondeep_model.step()
+        scheduler_nondeep_model.step()
+        # frame_gt_np = torch.Tensor.numpy(frame_tensor.detach().cpu())
+        # sampled_frame_estimated_np = torch.Tensor.numpy(sampled_frame_estimated.detach().cpu())
+        if iter == 0:
+            frame_gt_np = torch.Tensor.numpy(frame_tensor.detach().cpu())
+            sampled_frame_estimated_np = torch.Tensor.numpy(sampled_frame_estimated.detach().cpu())
+            initial_sampled_frame_est_np = sampled_frame_estimated_np
+            lossLocalNCC_output_list = image_localNCC_loss.reshape(1)
+            lossRot_output_list = rotation_loss.reshape(1)
+            lossTrans_output_list = translation_loss.reshape(1)
+        else:
+            lossLocalNCC_output_list =torch.cat((lossLocalNCC_output_list, image_localNCC_loss.reshape(1)))
+            lossRot_output_list = torch.cat((lossRot_output_list, rotation_loss.reshape(1)))
+            lossTrans_output_list = torch.cat((lossTrans_output_list, translation_loss.reshape(1)))
+
+        if iter > 10:
+            stop_flag = torch.std(lossLocalNCC_output_list[-5:]) < stop_thrld
+            if stop_flag:
+                sampled_frame_estimated_np = torch.Tensor.numpy(sampled_frame_estimated.detach().cpu())
+                break
+            
+    end = time.time()
+    time_elapsed = end - starting
+    print('*' * 10 + 'Training complete in {:.2f}s'.format(time_elapsed) + '*' * 10)
+    
+    lossLocalNCC_output_list_np = torch.Tensor.numpy(lossLocalNCC_output_list.detach().cpu())
+    lossRot_output_list_np = torch.Tensor.numpy(lossRot_output_list.detach().cpu())
+    lossTrans_output_list_np = torch.Tensor.numpy(lossTrans_output_list.detach().cpu())
+
+    """get registered image using ITK global NCC"""
+    transform_gt = dataset_frame[frame_index]["tfm_RegS2V_gt_mat"]
+    affine_transform_gt = transform_gt.type(torch.FloatTensor).to(device)
+    affine_transform_gt = affine_transform_gt.unsqueeze(0)
+    # print(affine_transform_gt)
+    # print(affine_transform_gt.shape)
+    """Resampling and reslicing the volume """
+    grid_affine_gt = F.affine_grid(theta= affine_transform_gt[:, 0:3, :], size = torch.Size([1, 1, volume_size[3], volume_size[2], volume_size[1]]), align_corners=True)
+    """get resampled volume and frame"""
+    vol_resampled_gt = F.grid_sample(volume, grid_affine_gt, align_corners=True)
+    # resampled_image_initial_np = torch.Tensor.numpy(vol_resampled)
+    sampled_frame_gt = vol_resampled_gt[:,:, int(volume_size[3]*0.5), :, :]
+    sampled_frame_gt_np = torch.Tensor.numpy(sampled_frame_gt.detach().cpu())
+    # fig = plt.figure(figsize=(15, 9))
+    # util_plot.plot_nondeep_model_comb(fig, lossLocalNCC_output_list_np, lossRot_output_list_np, lossTrans_output_list_np, initial_sampled_frame_est_np, sampled_frame_estimated_np, frame_gt_np)
+    # util_plot.plot_nondeep_model_comb_with_ITK(fig, lossLocalNCC_output_list_np, lossRot_output_list_np, lossTrans_output_list_np, initial_sampled_frame_est_np, sampled_frame_estimated_np, frame_gt_np, sampled_frame_gt_np)
 
 
 if __name__ == '__main__':
@@ -1154,16 +1387,34 @@ if __name__ == '__main__':
 
     training_dataset_3DUS = CacheDataset(data=training_volume_dict, transform=transform_3DUS)
     training_dataset_2DUS = CacheDataset(data=training_dataset_dict, transform=transform_2DUS)
-    training_dataloader_2DUS = DataLoader(dataset=training_dataset_2DUS, batch_size=2, shuffle=False)
-
+    
     validation_dataset_3DUS = CacheDataset(data=validation_volume_dict, transform=transform_3DUS)
     validation_dataset_2DUS = CacheDataset(data=validation_dataset_dict, transform=transform_2DUS)
-    validation_dataloader_2DUS = DataLoader(dataset=validation_dataset_2DUS, batch_size=2, shuffle=False)
+    
 
-    # print("number of cases: ", len(training_dataset_2DUS))
-    # sys.exit()
-    num_cases = {'train': len(training_dataset_2DUS), 'val': len(validation_dataset_2DUS)}
-    # Define the training model architecture
+    if DEEP_MODEL:
+        training_dataloader_2DUS = DataLoader(dataset=training_dataset_2DUS, batch_size=batch_size, shuffle=False)
+        validation_dataloader_2DUS = DataLoader(dataset=validation_dataset_2DUS, batch_size=batch_size, shuffle=False)
+        # print("number of cases: ", len(training_dataset_2DUS))
+        # sys.exit()
+        num_cases = {'train': len(training_dataset_2DUS), 'val': len(validation_dataset_2DUS)}
+        # Define the training model architecture
+        # model = RegS2Vnet.mynet3(layers=[3, 8, 36, 3]).to(device=device)
+        model = RegS2Vnet.RegS2Vnet_featurefusion(layers=[3, 3, 8, 3]).to(device=device)
+        if RESUME_MODEL:
+            pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_1/", 'RegS2V_best_Generator_30.pth')
+            model.load_state_dict(torch.load(pretrained_model, map_location=device))
+            print("RESUME")
+        # tv_hist = train_model(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
+        tv_hist = train_model_initialized(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
+        
+        json_obj = json.dumps(tv_hist)
+        f = open(os.path.join(output_dir, 'results_'+'{}.json'.format(now_str)), 'w')
+        # write json object to file
+        f.write(json_obj)
+        # close file
+        f.close()
 
-    model = RegS2Vnet.mynet3(layers=[3, 8, 36, 3]).to(device=device)
-    train_model(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
+    if NONDEEP_MODEL:
+        frame_index = 6
+        train_nondeep_model(training_dataset_2DUS, training_dataset_3DUS, frame_index)

@@ -80,9 +80,4 @@
 			<volume_name type="str">/home/UWO/xshuwei/DeepRegS2V/data/LHV/LHV-09/pre01_sweep01/in_moving_volumes/Pre-Ablation_01.mha</volume_name>
 			<volume_mask_name type="str">/home/UWO/xshuwei/DeepRegS2V/data/LHV/LHV-09/pre01_sweep01/in_moving_image_mask/moving_image_mask.mha</volume_mask_name>
 		</item>
-		<item type="dict">
-			<volume_ID type="int">16</volume_ID>
-			<volume_name type="str">/home/UWO/xshuwei/DeepRegS2V/data/LPT/LPT-027/pre02_needle01/in_moving_volumes/Pre-Ablation_02.mha</volume_name>
-			<volume_mask_name type="str">/home/UWO/xshuwei/DeepRegS2V/data/LPT/LPT-027/pre02_needle01/in_moving_image_mask/moving_image_mask.mha</volume_mask_name>
-		</item>
 	</volume_cases>
