@@ -83,7 +83,7 @@ parser.add_argument('-d', '--device_no',
 parser.add_argument('-e', '--epochs',
                     type=int,
                     help='number of training epochs',
-                    default=30)
+                    default=100)
 
 parser.add_argument('-b', '--batch_size',
                     type=int,
@@ -115,15 +115,18 @@ batch_size = args.batch_size
 num_epochs = args.epochs
 
 project_dir = os.getcwd()
-output_dir = os.path.join(project_dir, "src/outputs_featurefusion")
+output_dir = os.path.join(project_dir, "src/outputs_DeepS2VFF_plus_noise")
+isExist = os.path.exists(output_dir)
+if not isExist:
+    os.makedirs(output_dir)
 
 DEEP_MODEL = True
 NONDEEP_MODEL = False
-RESUME_MODEL = True
-net = 'refine'
+RESUME_MODEL = False
+net = 'DeepS2VFF_training_scratch'
 
 print('start device {}'.format(device))
-print("Network training type: {}".format(net))
+print("network training type: {}".format(net))
 print("output directory: {}".format(output_dir))
 print("RESUME_MODEL : {}".format(RESUME_MODEL))
 print('target training epoches: {}'.format(num_epochs))
@@ -734,7 +737,10 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                     running_dof += (rotation_loss + translation_loss)*actual_batch_size
                     nth_batch += 1
 
-                    print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
+                    torch.cuda.empty_cache()
+                    cur_lr = float(scheduler.get_last_lr()[0])
+                    # print(scheduler.get_last_lr())
+                    print('{}/{}: Train-BATCH (lr = {:.6f}): {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
                 
                 scheduler.step()
                 # sys.exit()
@@ -896,10 +902,12 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
         lr = args.learning_rate
         # print('Learning rate = {}'.format(lr))
 
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-    scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.8)
+    # optimizer = optim.Adam(model.parameters(), lr=lr)
+    # scheduler = lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.8)
 
-    
+    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+    scheduler = lr_scheduler.CyclicLR(optimizer, base_lr=1e-6, max_lr=1e-4,step_size_up=50)
+    # scheduler = lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=20)
     # now_str = '150nonorm'
     
     # output_dir = r"E:\PROGRAM\Project_PhD\Registration\Deepcode\FVR-Net\outputs\models"
@@ -974,8 +982,17 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
 
                         """initialized volume"""
                         affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor).to(device)
-                        # affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor)
-                        grid_affine = F.affine_grid(theta= affine_transform_initial[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
+
+                        """adding noise (normal distribution)"""
+                        mean = torch.zeros(1, 6)
+                        std = torch.tensor([[3.4, 3.4, 3.4, 2.0, 2.0, 2.0]])
+                        dof_noise  = torch.normal(mean = mean, std = std)
+                        # print("noise added: {}".format(dof_noise))
+                        transform_noise = tools.dof2mat_tensor(input_dof=dof_noise).type(torch.FloatTensor).to(device)
+                        affine_transform_initial_plus_noise = torch.matmul(transform_noise, affine_transform_initial)
+                       
+
+                        grid_affine = F.affine_grid(theta= affine_transform_initial_plus_noise[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
                         vol_initialized = F.grid_sample(vol_tensor, grid_affine, align_corners=True)
                         # vol_initialized = vol_initialized.to(device)
 
@@ -1043,9 +1060,9 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         
                         alpha = 2.0
                         beta = 2.0
-                        gamma = 10.0
-                        # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
-                        loss_combined = image_localNCC_loss
+                        gamma = 5.0
+                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        # loss_combined = image_localNCC_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
                         # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
                         # print("loss_combined device (guess cuda): ", loss_combined.device)
@@ -1065,7 +1082,7 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     torch.cuda.empty_cache()
                     cur_lr = float(scheduler.get_last_lr()[0])
                     # print(scheduler.get_last_lr())
-                    print('{}/{}: Train-BATCH (lr = {:.4f}): {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
+                    print('{}/{}: Train-BATCH (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
                 
                 scheduler.step()
                 # sys.exit()
@@ -1200,7 +1217,7 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     best_ep = epoch
                     print('**** best model updated with loss={:.4f} ****'.format(lowest_loss))
                 if epoch%5 == 0 and epoch != 0:
-                    fn_save = path.join(output_dir, 'RegS2V_feature_fusion_{}_{}.pth'.format(net, epoch))
+                    fn_save = path.join(output_dir, '{}_{}.pth'.format(net, epoch))
                     torch.save(model.state_dict(), fn_save)
                 
                 torch.cuda.empty_cache()    

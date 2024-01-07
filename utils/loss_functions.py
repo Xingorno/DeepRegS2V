@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import numpy as np
 # import torch.nn as nn
 class LocalNCC:
-    def __init__(self, device = "cpu", kernel_size =(51, 51), stride = (1, 1), sampling = 'regular', padding = 'valid', reduction = 'mean', cropping = True, eps = 1e-5, win_eps = 0.1):
+    def __init__(self, device = "cpu", kernel_size =(51, 51), stride = (1, 1), sampling = 'regular', padding = 'valid', reduction = 'mean', cropping = True, eps = 1e-3, win_eps = 0.1):
         
         self.kernel_size = kernel_size
         # if self.kernel_size == 'none':
