@@ -566,6 +566,18 @@ def dof2mat_tensor(input_dof):
     # sys.exit()
     return M
 
+def mat2dof_tensor(input_mat):
+    transform_input_np = torch.Tensor.numpy(input_mat.detach().cpu())
+    transform_shape = transform_input_np.shape
+    if len(transform_shape) == 3:
+        input_dof_np = np.zeros((transform_shape[0], 6))
+        for i in range(0, transform_shape[0]):
+            input_dof_np[i,:] = mat2dof_np(transform_input_np[i])[0:6]
+        input_dof_tensor = torch.from_numpy(input_dof_np)
+        return input_dof_tensor
+    else:
+        print("input erro about transformation matrix")
+        return
 
 def dof2mat_tensor_backup(input_dof, device):
     """Note: the order of rigid transformation (first: translation, secondly: rotation)"""

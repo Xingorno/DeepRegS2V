@@ -657,7 +657,7 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                         
                         optimizer.zero_grad()
 
-                        vol_resampled, dof_estimated = model(vol=vol_tensor, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
+                        vol_resampled, dof_estimated, transform_noise_mat = model(vol=vol_tensor, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
                         # print('vol_resampled {}'.format(vol_resampled.shape))
                         # print('dof_estimated {}'.format(dof_estimated))
                         
@@ -673,11 +673,15 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                         # writer.write(output_filename)
 
                         # sys.exit()
+                        """update the dof_tensor_gt"""
+                        transform_dof_gt_pre = tools.dof2mat_tensor(input_dof=dof_tensor).type(torch.FloatTensor).to(device)
+                        transform_dof_gt = torch.matmul(transform_dof_gt_pre, torch.linalg.inv(transform_noise_mat))
+                        dof_tensor_gt = tools.mat2dof_tensor(input_mat=transform_dof_gt).type(torch.FloatTensor).to(device=device)
 
                         """rotation loss (deg)"""
-                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
+                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor_gt[:, 3:])
                         """translation loss (mm)"""
-                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
+                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor_gt[:, :3])
 
                         """image intensity-based loss (localNCC)"""
                         frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
@@ -986,9 +990,12 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         """adding noise (normal distribution)"""
                         mean = torch.zeros(1, 6)
                         std = torch.tensor([[3.4, 3.4, 3.4, 2.0, 2.0, 2.0]])
-                        dof_noise  = torch.normal(mean = mean, std = std)
-                        # print("noise added: {}".format(dof_noise))
+                        dof_noise = torch.zeros(batch_size, 6)
+                        for i in range(batch_size):
+                            dof_noise[i,:] = torch.normal(mean = mean, std = std)
+
                         transform_noise = tools.dof2mat_tensor(input_dof=dof_noise).type(torch.FloatTensor).to(device)
+                        # print(transform_noise.shape)
                         affine_transform_initial_plus_noise = torch.matmul(transform_noise, affine_transform_initial)
                        
 
@@ -1026,11 +1033,15 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         vol_resampled, dof_estimated = model(vol=vol_initialized, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
                         
                         # sys.exit()
+                        """update the dof_tensor_gt"""
+                        transform_dof_gt_pre = tools.dof2mat_tensor(input_dof=dof_tensor).type(torch.FloatTensor).to(device)
+                        transform_dof_gt = torch.matmul(transform_dof_gt_pre, torch.linalg.inv(transform_noise))
+                        dof_tensor_gt = tools.mat2dof_tensor(input_mat=transform_dof_gt).type(torch.FloatTensor).to(device=device)
 
                         """rotation loss (deg)"""
-                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
+                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor_gt[:, 3:])
                         """translation loss (mm)"""
-                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
+                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor_gt[:, :3])
 
                         """image intensity-based loss (localNCC)"""
                         frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
@@ -1058,9 +1069,9 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         # print("image_localNCC_loss device: ", image_localNCC_loss.device)
                         # coefficients for loss functinos
                         
-                        alpha = 2.0
-                        beta = 2.0
-                        gamma = 5.0
+                        alpha = 5.0
+                        beta = 5.0
+                        gamma = 10.0
                         loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
                         # loss_combined = image_localNCC_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)

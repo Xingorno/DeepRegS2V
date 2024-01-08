@@ -32,7 +32,7 @@ def downsample_basic_block(x, planes, stride):
     return out
 
 class ResNeXtBottleneck(nn.Module):
-    expansion = 1
+    expansion = 2
 
     def __init__(self, inplanes, planes, cardinality, stride=1,
                  downsample=None):
@@ -52,7 +52,7 @@ class ResNeXtBottleneck(nn.Module):
             padding=1,
             groups=cardinality,
             bias=False)
-        print('stride {}'.format(stride))
+        # print('stride {}'.format(stride))
         self.bn2 = nn.BatchNorm3d(mid_planes)
         self.conv3 = nn.Conv3d(
             mid_planes, planes * self.expansion, kernel_size=1, bias=False)
@@ -316,36 +316,36 @@ class mynet3(nn.Module):
             frame = self.frameBranch(frame)
 
             x = torch.cat((vol, frame), 2)
-            print('cat {}'.format(x.shape))
+            # print('cat {}'.format(x.shape))
             # sys.exit()
 
             x = self.layer1(x)
-            print('layer1 {}'.format(x.shape))
+            # print('layer1 {}'.format(x.shape))
 
             x = self.layer2(x)
-            print('layer2 {}'.format(x.shape))
+            # print('layer2 {}'.format(x.shape))
 
             x = self.layer3(x)
-            print('layer3 {}'.format(x.shape))
+            # print('layer3 {}'.format(x.shape))
 
             x = self.layer4(x)
-            print('layer4 {}'.format(x.shape))
+            # print('layer4 {}'.format(x.shape))
 
             x = self.avgpool(x)
-            print('avgpool {}'.format(x.shape))
+            # print('avgpool {}'.format(x.shape))
 
             x = x.view(x.size(0), -1)
-            print('view {}'.format(x.shape))
+            # print('view {}'.format(x.shape))
             x = self.fc0(x)
-            print('fc0 {}'.format(x.shape))
+            # print('fc0 {}'.format(x.shape))
             x = self.relu(x)
 
             x = self.fc1(x)
-            print('fc1 {}'.format(x.shape))
+            # print('fc1 {}'.format(x.shape))
             # dof_out = x.clone()
             x = self.relu(x)
             x = self.fc2(x)
-            print('fc2 {}'.format(x.shape))
+            # print('fc2 {}'.format(x.shape))
             # sys.exit()
             """ add the correction transformation"""
             # print('output x {}'.format(x.shape))
@@ -365,8 +365,20 @@ class mynet3(nn.Module):
             # print("affine_transform_initial is leaf_variable (guess True): ", affine_transform_initial.is_leaf)
             # print("affine_transform_initial is required_grad (guess False): ", affine_transform_initial.requires_grad)
             
+            """adding noise (normal distribution)"""
+            mean = torch.zeros(1, 6)
+            std = torch.tensor([[3.4, 3.4, 3.4, 2.0, 2.0, 2.0]])
+            batch_size = 1
+            dof_noise = torch.zeros(batch_size, 6)
+            for i in range(batch_size):
+                dof_noise[i,:] = torch.normal(mean = mean, std = std)
+            # print("noise added: {}".format(dof_noise))
+            transform_noise = tools.dof2mat_tensor(input_dof=dof_noise).type(torch.FloatTensor).to(device)
+
             """get the transformation (initial + correction)"""
-            affine_transform_combined = torch.matmul(correction_transform, affine_transform_initial)
+            # affine_transform_combined = torch.matmul(correction_transform, affine_transform_initial)
+            affine_transform_combined_ = torch.matmul(transform_noise, affine_transform_initial)
+            affine_transform_combined = torch.matmul(correction_transform, affine_transform_combined_)
             # print("affine_transform_combined: {}".format(affine_transform_combined))
             # print("affine_transform_combined: {}".format(affine_transform_combined.shape))
             # print('affine_transform_combined: ', affine_transform_combined.device)
@@ -421,7 +433,7 @@ class mynet3(nn.Module):
             vol_resampled = F.grid_sample(input_vol, grid)
             # del mat
             
-        return vol_resampled, x
+        return vol_resampled, x, transform_noise
     
 class RegS2Vnet_featurefusion(nn.Module):
     def __init__(self, layers):
