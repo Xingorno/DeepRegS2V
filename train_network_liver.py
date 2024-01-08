@@ -125,6 +125,8 @@ NONDEEP_MODEL = False
 RESUME_MODEL = False
 net = 'DeepS2VFF_training_scratch'
 
+addNoise = True
+
 print('start device {}'.format(device))
 print("network training type: {}".format(net))
 print("output directory: {}".format(output_dir))
@@ -132,6 +134,7 @@ print("RESUME_MODEL : {}".format(RESUME_MODEL))
 print('target training epoches: {}'.format(num_epochs))
 print("training batch size: {}".format(batch_size))
 print("learning rate: {}".format(args.learning_rate))
+print("adding noise to data: {}".format(addNoise))
 
 now = datetime.now()
 now_str = now.strftime('%m%d_%H%M%S')
@@ -463,8 +466,22 @@ class LoadRegistrationTransformd(MapTransform):
             tfm_RegS2V_initial_np_from = tfm_3DUS_CT_np@tfm_RegS2V_initial_np@tfm_RegS2V_correction_np_pre # from parent
             tfm_RegS2V_initial_np_to = np.linalg.inv(tfm_RegS2V_initial_np_from) # (initial transform) to parent
             # print("initial transform:", tfm_RegS2V_initial_np_to)
-            """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
-            tfm_RegS2V_initial_np_to = T_scale@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
+            # addNoise = True
+            if addNoise:
+                """adding noise translation: N(mean = 0, std = 3), rotation: N(mean = 0, std = 3)"""
+                translation_dof_noise = np.random.normal(0, 3, (3))
+                rotation_dof_noise = np.random.normal(0, 3, (3))
+                transform_dof_noise = np.concatenate((translation_dof_noise, rotation_dof_noise), axis =0)
+                transform_noise_np = tools.dof2mat_np(transform_dof_noise) # 4 by 4 matrix
+                """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
+                tfm_RegS2V_initial_np_to = T_scale@transform_noise_np@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
+            else:
+                """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
+                tfm_RegS2V_initial_np_to = T_scale@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
+
+
+            # """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
+            # tfm_RegS2V_initial_np_to = T_scale@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
             """get transform_pytorch"""
             tfm_RegS2V_initial_pytorch = transform_conversion_ITK_to_pytorch(tfm_RegS2V_initial_np_to, self.volume_size) # this is the affine_transform_pytorch
             tfm_RegS2V_initial_mat_tensor = torch.from_numpy(tfm_RegS2V_initial_pytorch)
@@ -657,7 +674,7 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                         
                         optimizer.zero_grad()
 
-                        vol_resampled, dof_estimated, transform_noise_mat = model(vol=vol_tensor, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
+                        vol_resampled, dof_estimated = model(vol=vol_tensor, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device, training=True) # shape batch_size*6
                         # print('vol_resampled {}'.format(vol_resampled.shape))
                         # print('dof_estimated {}'.format(dof_estimated))
                         
@@ -673,15 +690,12 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                         # writer.write(output_filename)
 
                         # sys.exit()
-                        """update the dof_tensor_gt"""
-                        transform_dof_gt_pre = tools.dof2mat_tensor(input_dof=dof_tensor).type(torch.FloatTensor).to(device)
-                        transform_dof_gt = torch.matmul(transform_dof_gt_pre, torch.linalg.inv(transform_noise_mat))
-                        dof_tensor_gt = tools.mat2dof_tensor(input_mat=transform_dof_gt).type(torch.FloatTensor).to(device=device)
+                        
 
                         """rotation loss (deg)"""
-                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor_gt[:, 3:])
+                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
                         """translation loss (mm)"""
-                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor_gt[:, :3])
+                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
 
                         """image intensity-based loss (localNCC)"""
                         frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
@@ -720,10 +734,10 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                         # print("image_localNCC_loss device: ", image_localNCC_loss.device)
                         # coefficients for loss functinos
                         alpha = 1.0
-                        beta = 2.0
-                        gamma = 10.0
-                        # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
-                        loss_combined = image_localNCC_loss
+                        beta = 1.0
+                        gamma = 5.0
+                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        # loss_combined = image_localNCC_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
                         # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
                         # print("loss_combined device (guess cuda): ", loss_combined.device)
@@ -791,7 +805,7 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                     with torch.set_grad_enabled(phase == 'train'):
                         
                         
-                        vol_resampled, dof_estimated = model(vol=vol_tensor, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
+                        vol_resampled, dof_estimated = model(vol=vol_tensor, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device, training=False) # shape batch_size*6
                         
                         # """save the vol_resampled""" 
                         # vol_resampled_= torch.permute(vol_resampled.data, (0, 1, 4, 3, 2))
@@ -842,10 +856,10 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
                         
                         # coefficients for loss functinos
                         alpha = 1.0
-                        beta = 2.0
-                        gamma = 10.0
-                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
-                        
+                        beta = 1.0
+                        gamma = 5.0
+                        # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        loss_combined = image_localNCC_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
                         # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
                         # print("loss_combined device (guess cuda): ", loss_combined.device)
@@ -987,19 +1001,7 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         """initialized volume"""
                         affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor).to(device)
 
-                        """adding noise (normal distribution)"""
-                        mean = torch.zeros(1, 6)
-                        std = torch.tensor([[3.4, 3.4, 3.4, 2.0, 2.0, 2.0]])
-                        dof_noise = torch.zeros(batch_size, 6)
-                        for i in range(batch_size):
-                            dof_noise[i,:] = torch.normal(mean = mean, std = std)
-
-                        transform_noise = tools.dof2mat_tensor(input_dof=dof_noise).type(torch.FloatTensor).to(device)
-                        # print(transform_noise.shape)
-                        affine_transform_initial_plus_noise = torch.matmul(transform_noise, affine_transform_initial)
-                       
-
-                        grid_affine = F.affine_grid(theta= affine_transform_initial_plus_noise[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
+                        grid_affine = F.affine_grid(theta= affine_transform_initial[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
                         vol_initialized = F.grid_sample(vol_tensor, grid_affine, align_corners=True)
                         # vol_initialized = vol_initialized.to(device)
 
@@ -1031,17 +1033,11 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         # sys.exit()
 
                         vol_resampled, dof_estimated = model(vol=vol_initialized, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
-                        
-                        # sys.exit()
-                        """update the dof_tensor_gt"""
-                        transform_dof_gt_pre = tools.dof2mat_tensor(input_dof=dof_tensor).type(torch.FloatTensor).to(device)
-                        transform_dof_gt = torch.matmul(transform_dof_gt_pre, torch.linalg.inv(transform_noise))
-                        dof_tensor_gt = tools.mat2dof_tensor(input_mat=transform_dof_gt).type(torch.FloatTensor).to(device=device)
-
+                                               
                         """rotation loss (deg)"""
-                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor_gt[:, 3:])
+                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
                         """translation loss (mm)"""
-                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor_gt[:, :3])
+                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
 
                         """image intensity-based loss (localNCC)"""
                         frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
@@ -1069,9 +1065,9 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         # print("image_localNCC_loss device: ", image_localNCC_loss.device)
                         # coefficients for loss functinos
                         
-                        alpha = 5.0
-                        beta = 5.0
-                        gamma = 10.0
+                        alpha = 1.0
+                        beta = 1.0
+                        gamma = 5.0
                         loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
                         # loss_combined = image_localNCC_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
@@ -1196,8 +1192,8 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         
                         # coefficients for loss functinos
                         alpha = 1.0
-                        beta = 2.0
-                        gamma = 10.0
+                        beta = 1.0
+                        gamma = 5.0
                         # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
                         loss_combined = image_localNCC_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
