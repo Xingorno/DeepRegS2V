@@ -83,12 +83,12 @@ parser.add_argument('-d', '--device_no',
 parser.add_argument('-e', '--epochs',
                     type=int,
                     help='number of training epochs',
-                    default=100)
+                    default=500)
 
 parser.add_argument('-b', '--batch_size',
                     type=int,
                     help='number of batch size',
-                    default=1)
+                    default=2)
 
 parser.add_argument('-n', '--network_type',
                     type=str,
@@ -115,7 +115,7 @@ batch_size = args.batch_size
 num_epochs = args.epochs
 
 project_dir = os.getcwd()
-output_dir = os.path.join(project_dir, "src/outputs_DeepS2VFF_plus_noise")
+output_dir = os.path.join(project_dir, "src/outputs_DeepRCS2C_3_weakly_supervised")
 isExist = os.path.exists(output_dir)
 if not isExist:
     os.makedirs(output_dir)
@@ -123,7 +123,10 @@ if not isExist:
 DEEP_MODEL = True
 NONDEEP_MODEL = False
 RESUME_MODEL = False
-net = 'DeepS2VFF_training_scratch'
+TRAINED_MODEL = 3
+trained_model_list = {'1': 'FVnet-supervised', '2': 'DeepS2VFF', '3':'DeepRCS2V'}
+# net = 'DeepS2VFF_refine_leakyReLU_localNCC'
+net = 'DeepRCS2C_weakly_supervised'
 
 addNoise = True
 
@@ -134,6 +137,7 @@ print("RESUME_MODEL : {}".format(RESUME_MODEL))
 print('target training epoches: {}'.format(num_epochs))
 print("training batch size: {}".format(batch_size))
 print("learning rate: {}".format(args.learning_rate))
+print("TRAINED_MODEL : {}".format(trained_model_list[str(TRAINED_MODEL)]))
 print("adding noise to data: {}".format(addNoise))
 
 now = datetime.now()
@@ -142,33 +146,6 @@ print('now_str: {}'.format(now_str))
 # create saving file
 file = open(os.path.join(output_dir, '{}.txt'.format(now_str)), 'w')
 file.close()
-
-
-
-# def defineModel(model_type):
-#     pretrain_model_str = model_type
-
-#     if model_type == 'mynet3_50':
-#         model_ft = mynet.mynet3(layers=[3, 4, 6, 3])
-#     elif model_type == 'mynet3_101' or model_type == 'test':
-#         model_ft = mynet.mynet3(layers=[3, 4, 23, 3])
-#     elif model_type == 'mynet3_150' or 'mynet3_150_l1':
-#         model_ft = mynet.mynet3(layers=[3, 8, 36, 3])
-#     elif model_type == 'mynet4_150':
-#         model_ft = mynet.mynet4()
-#     else:
-#         print('Network type {} not supported!'.format(model_type))
-#         sys.exit()
-    
-#     # model_path = path.join(model_folder, '3d_best_Generator_{}.pth'.format(pretrain_model_str))  # 10
-#     # model_ft.load_state_dict(torch.load(model_path, map_location='cuda:0'))
-#     model_ft.cuda()
-#     model_ft.eval()
-#     model_ft = model_ft.to(device)
-
-#     return model_ft
-
-
 
 def filename_list(dir):
     images = []
@@ -181,8 +158,6 @@ def filename_list(dir):
         # print(file_path)
     # print(images)
     return images
-
-
 
 
 def save_info():
@@ -202,16 +177,16 @@ def save_info():
     file.close()
     print('Information has been saved!')
 
-# def update_info(best_epoch, current_epoch, lowest_val_TRE):
-#     # readFile = open(os.path.join(output_dir, '{}.txt'.format(now_str)), "w")
-#     # lines = readFile.readlines()
-#     # readFile.close()
+def calculate_cascaded_transform(theta_list, device):
+    cascaded_transform = tools.dof2mat_tensor(input_dof=torch.zeros(1, 6)).type(torch.FloatTensor)
+    cascaded_transform = cascaded_transform.to(device)
+    for i in range(len(theta_list)):
+        trans = tools.dof2mat_tensor(input_dof=theta_list[i]).type(torch.FloatTensor)
+        trans = trans.to(device)
+        cascaded_transform =torch.matmul(trans, cascaded_transform)
+    return cascaded_transform
 
-#     file = open(os.path.join(output_dir, '{}.txt'.format(now_str)), 'a')
-#     file.write('Best_epoch: {}/{}\n'.format(best_epoch, current_epoch))
-#     file.write('Val_loss: {:.4f}\n'.format(lowest_val_TRE))
-#     file.close()
-#     print('Info updated in {}!'.format(now_str))
+
 
 def update_info(best_epoch, current_epoch, lowest_val_TRE, tv_hist):
     # readFile = open(os.path.join(output_dir, '{}.txt'.format(now_str)), "w")
@@ -472,7 +447,9 @@ class LoadRegistrationTransformd(MapTransform):
                 translation_dof_noise = np.random.normal(0, 3, (3))
                 rotation_dof_noise = np.random.normal(0, 3, (3))
                 transform_dof_noise = np.concatenate((translation_dof_noise, rotation_dof_noise), axis =0)
+                # print("transform_dof_noise:{}".format(transform_dof_noise))
                 transform_noise_np = tools.dof2mat_np(transform_dof_noise) # 4 by 4 matrix
+                # print("transform_noise_np:{}".format(transform_noise_np))
                 """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
                 tfm_RegS2V_initial_np_to = T_scale@transform_noise_np@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
             else:
@@ -496,10 +473,11 @@ class LoadRegistrationTransformd(MapTransform):
 
             tfm_gt_diff_mat = tfm_RegS2V_gt_pytorch@np.linalg.inv(tfm_RegS2V_initial_pytorch)
             tfm_gt_diff_mat_tensor = torch.from_numpy(tfm_gt_diff_mat)
-            
+            # print("tfm_gt_diff_mat:{}".format(tfm_gt_diff_mat))
             tfm_gt_diff_dof = tools.mat2dof_np(input_mat=tfm_gt_diff_mat)
             tfm_gt_diff_dof_tensor = torch.from_numpy(tfm_gt_diff_dof[:6])
-            
+            # print("tfm_RegS2V_initial_pytorch:{}".format(tfm_RegS2V_initial_pytorch))
+            # print("tfm_RegS2V_gt_pytorch:{}".format(tfm_RegS2V_gt_pytorch))
 
             data["tfm_gt_diff_mat"] = tfm_gt_diff_mat_tensor
             data["tfm_gt_diff_dof"] = tfm_gt_diff_dof_tensor
@@ -593,7 +571,11 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
 
     loss_mse = nn.MSELoss()
     # loss_localNCC = LocalNormalizedCrossCorrelationLoss(spatial_dims=2, kernel_size= 13, kernel_type="rectangular", reduction="mean")
-    loss_localNCC = loss_F.LocalNCC(device = device, kernel_size =(71, 71), stride=(1, 1), padding="valid", win_eps= 100)
+    # loss_localNCC = loss_F.LocalNCC(device = device, kernel_size =(71, 71), stride=(1, 1), padding="valid", win_eps= 100)
+
+    kernel_size = 91
+    loss_localNCC = loss_F.LocalNCC_new(device = device, kernel_size =(kernel_size, kernel_size), stride=(2, 2), padding="valid", win_eps= 0.98)
+
     if args.training_mode == 'finetune':
         # overwrite the learning rate for finetune
         lr = 5e-6
@@ -605,11 +587,6 @@ def train_model(model, training_dataset_frame, training_dataset_volume, validati
     optimizer = optim.Adam(model.parameters(), lr=lr)
     scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.8)
 
-    
-    # now_str = '150nonorm'
-    
-    # output_dir = r"E:\PROGRAM\Project_PhD\Registration\Deepcode\FVR-Net\outputs\models"
-    # fn_save = path.join(output_dir, 'RegS2V_best_{}_{}.pth'.format(net, now_str))
     
     # num_epochs=25
     lowest_loss = 2000
@@ -911,7 +888,9 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
     since = time.time()
     loss_mse = nn.MSELoss()
     # loss_localNCC = LocalNormalizedCrossCorrelationLoss(spatial_dims=2, kernel_size= 13, kernel_type="rectangular", reduction="mean")
-    loss_localNCC = loss_F.LocalNCC(device = device, kernel_size =(71, 71), stride=(1, 1), padding="valid", win_eps= 100)
+    # loss_localNCC = loss_F.LocalNCC(device = device, kernel_size =(71, 71), stride=(1, 1), padding="valid", win_eps= 100)
+    kernel_size = 91
+    loss_localNCC = loss_F.LocalNCC_new(device = device, kernel_size =(kernel_size, kernel_size), stride=(2, 2), padding="valid", win_eps= 0.98)
     if args.training_mode == 'finetune':
         # overwrite the learning rate for finetune
         lr = 5e-6
@@ -924,7 +903,7 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
     # scheduler = lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.8)
 
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
-    scheduler = lr_scheduler.CyclicLR(optimizer, base_lr=1e-6, max_lr=1e-4,step_size_up=50)
+    scheduler = lr_scheduler.CyclicLR(optimizer, base_lr=5e-5, max_lr=5e-4,step_size_up=50)
     # scheduler = lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=20)
     # now_str = '150nonorm'
     
@@ -1041,6 +1020,8 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
 
                         """image intensity-based loss (localNCC)"""
                         frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
+                        # frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].detach().cpu()
+                        # frame_tensor_gt_4d =frame_tensor_gt_4d.detach().cpu()
                         # print("frame_estimated shape: ", frame_estimated.shape)
                         
 
@@ -1065,11 +1046,13 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         # print("image_localNCC_loss device: ", image_localNCC_loss.device)
                         # coefficients for loss functinos
                         
-                        alpha = 1.0
-                        beta = 1.0
-                        gamma = 5.0
-                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
-                        # loss_combined = image_localNCC_loss
+                        # alpha = 1.0
+                        # beta = 1.0
+                        # gamma = 5.0
+                        # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+
+                        loss_combined = image_localNCC_loss
+                        # loss_combined = alpha*rotation_loss + beta*translation_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
                         # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
                         # print("loss_combined device (guess cuda): ", loss_combined.device)
@@ -1089,7 +1072,7 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     torch.cuda.empty_cache()
                     cur_lr = float(scheduler.get_last_lr()[0])
                     # print(scheduler.get_last_lr())
-                    print('{}/{}: Train-BATCH (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
+                    print('{}/{}: Train-BATCH (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.6f}(loss_translation), {:.4f}(loss_rotation)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, translation_loss, rotation_loss))
                 
                 scheduler.step()
                 # sys.exit()
@@ -1191,9 +1174,9 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         image_localNCC_loss, ROI = loss_localNCC(frame_estimated, frame_tensor_gt_4d)
                         
                         # coefficients for loss functinos
-                        alpha = 1.0
-                        beta = 1.0
-                        gamma = 5.0
+                        # alpha = 1.0
+                        # beta = 1.0
+                        # gamma = 5.0
                         # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
                         loss_combined = image_localNCC_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
@@ -1209,8 +1192,337 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     running_dof += (rotation_loss + translation_loss)*actual_batch_size  
                     nth_batch += 1
                     
-                    print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
+                    print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.6f}(loss_translation),  {:.4f}(loss_rotation)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, translation_loss, rotation_loss))
                 
+                # sys.exit()
+                epoch_loss = running_loss / num_cases[phase]
+                epoch_running_localNCC = running_localNCC/num_cases[phase]
+                epoch_running_dof = running_dof/num_cases[phase]
+                tv_hist[phase].append([float(epoch_loss), float(epoch_running_localNCC), float(epoch_running_dof)])
+                # print('tv_hist\n{}'.format(tv_hist))
+            
+                # deep copy the model
+                if epoch_loss < lowest_loss:
+                    lowest_loss = epoch_loss
+                    best_ep = epoch
+                    print('**** best model updated with loss={:.4f} ****'.format(lowest_loss))
+                if epoch%5 == 0 and epoch != 0:
+                    fn_save = path.join(output_dir, '{}_{}_unsupervised.pth'.format(net, epoch))
+                    torch.save(model.state_dict(), fn_save)
+                
+                torch.cuda.empty_cache()    
+        # sys.exit()    
+        # update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss, loss_combined = tv_hist['train'][-1][0], loss_image = tv_hist['train'][-1][1], loss_dof = tv_hist['train'][-1][2])
+        update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss, tv_hist=tv_hist)
+        print("=========================================================================================================================================")
+        print('{}/{}: Train: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof), Validation: {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_dof)'.format(
+            epoch + 1, num_epochs,
+            tv_hist['train'][-1][0],tv_hist['train'][-1][1], tv_hist['train'][-1][2],
+            tv_hist['val'][-1][0], tv_hist['val'][-1][1], tv_hist['val'][-1][2]))
+        print("=========================================================================================================================================")
+        # sys.exit()
+        
+    time_elapsed = time.time() - since
+    print('*' * 10 + 'Training complete in {:.0f}m {:.0f}s'.format(
+        time_elapsed // 60, time_elapsed % 60))
+
+    return tv_hist
+
+
+def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume, validation_dataset_frame, validation_dateset_volume, num_cases):
+    since = time.time()
+    loss_mse = nn.MSELoss()
+    # loss_localNCC = LocalNormalizedCrossCorrelationLoss(spatial_dims=2, kernel_size= 13, kernel_type="rectangular", reduction="mean")
+    # loss_localNCC = loss_F.LocalNCC(device = device, kernel_size =(71, 71), stride=(1, 1), padding="valid", win_eps= 100)
+    kernel_size = 91
+    loss_localNCC = loss_F.LocalNCC_new(device = device, kernel_size =(kernel_size, kernel_size), stride=(2, 2), padding="valid", win_eps= 0.98)
+    if args.training_mode == 'finetune':
+        # overwrite the learning rate for finetune
+        lr = 5e-6
+        print('Learning rate is overwritten to be {}'.format(lr))
+    else:
+        lr = args.learning_rate
+        # print('Learning rate = {}'.format(lr))
+
+    trainable_params = []
+    for submodel in model.stems:
+        trainable_params += list(submodel.parameters())
+    trainable_params += list(model.spatial_transformer.parameters())
+
+    # optimizer = optim.Adam(model.parameters(), lr=lr)
+    # scheduler = lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.8)
+    optimizer = optim.SGD(trainable_params, lr=lr, momentum=0.9)
+    # optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+    scheduler = lr_scheduler.CyclicLR(optimizer, base_lr=1e-6, max_lr=1e-4,step_size_up=100)
+    # scheduler = lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=20)
+    # now_str = '150nonorm'
+    
+ 
+    # num_epochs=25
+    lowest_loss = 2000
+    best_ep = 0
+    tv_hist = {'train': [], 'val': []}
+
+    for epoch in range(num_epochs):
+        # Each epoch has a training and validation phase
+        for phase in ['train', 'val']:
+            print('Network is in {}...'.format(phase))
+            
+            running_loss = 0.0
+            running_localNCC = 0.0
+            running_dof = 0.0
+
+            if phase == 'train':
+                # scheduler.step()
+                model.train()
+                nth_batch = 0
+                for i, batch in enumerate(training_dataset_frame):
+                    """create the batch volume tensor. This way could significantly reduce the computation when preprocessing"""
+                    volume_size = training_dataset_volume[0]['volume_name'].shape
+                    actual_batch_size = len(batch["volume_ID"])
+                    # vol_tensor = torch.zeros(actual_batch_size, volume_size[0], volume_size[1], volume_size[2], volume_size[3])
+
+                    """converting from N*C*W*H*D to N*C*D*H*W"""
+                    vol_tensor = torch.zeros(actual_batch_size, volume_size[0], volume_size[3], volume_size[2], volume_size[1])
+                    for i, volume_id in enumerate(batch["volume_ID"]):
+                        # print("volume_id: ", volume_id)
+                        vol_tensor[i, :, :, :, :] = torch.permute(training_dataset_volume[volume_id]['volume_name'].type(torch.FloatTensor), (0, 3, 2, 1))   
+                    frame_tensor = torch.permute(batch["frame_name"].type(torch.FloatTensor), (0, 1, 4, 3, 2))
+                    # mat_tensor = batch["tfm_gt_diff_mat"].type(torch.FloatTensor)
+                    dof_tensor = batch["tfm_gt_diff_dof"].type(torch.FloatTensor)
+                    
+                    # print('vol_tensor {}'.format(vol_tensor.shape))
+                    # print('frame_tensor {}'.format(frame_tensor.shape))
+                    # print('mat_tensor {}'.format(mat_tensor.shape))
+                    # print('dof_tensor {}'.format(dof_tensor.shape))
+                    
+                    # sys.exit()
+                    vol_tensor = vol_tensor.to(device)
+                    # frame_tensor = frame_tensor.to(device)
+                    # mat_tensor = mat_tensor.to(device)
+                    dof_tensor = dof_tensor.to(device)
+                    # mat_tensor.require_grad = True
+                    # dof_tensor.require_grad = True
+
+                    """normalize the flip of frame image"""
+                    frame_tensor_gt = torch.zeros((frame_tensor.shape))
+                    for i, frame_flip_flag in enumerate(batch["frame_flip_flag"]):
+                        if frame_flip_flag == "True":
+                            frame_tensor_gt[i, :,:, :, :] = torch.flip(frame_tensor[i, :, :,:, :], [3])
+                        else:
+                            frame_tensor_gt[i, :, :, :,:] = frame_tensor[i,:, :, :, :]
+                    frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
+
+                    # print("frame_tensor_gt",frame_tensor_gt.shape)
+                    # forward
+                    # track history if only in train
+                    with torch.set_grad_enabled(phase == 'train'):
+                        optimizer.zero_grad()
+
+                        """initialized volume"""
+                        affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor).to(device)
+                        # # vol_initialized = vol_initialized.to(device)
+                        frame_tensor_gt_4d = frame_tensor_gt.squeeze(2)
+                        # sys.exit()
+                        vol_resampled, theta_list, delta_mat_accumulate_list = model(vol=vol_tensor, img_fixed=frame_tensor_gt_4d, initial_transform = affine_transform_initial) # shape batch_size*6
+                        
+                        # cascaded_transform = calculate_cascaded_transform(theta_list, device)
+                        # print('cascaded_transform: {}'.format(cascaded_transform))
+                        # print("theta_list: {}".format(theta_list))
+                        # print('delta_mat_accumulate_list: {}'.format(delta_mat_accumulate_list))
+                        # print('delta_mat_accumulate_list[-1]: {}'.format(delta_mat_accumulate_list[-1]))
+                        # sys.exit()
+                        dof_estimated = tools.mat2dof_tensor(delta_mat_accumulate_list[-1])
+                        dof_estimated = dof_estimated.to(device)
+                        """rotation loss (deg)"""
+                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
+                        """translation loss (mm)"""
+                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
+
+                        """image intensity-based loss (localNCC)"""
+                        frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :]
+
+
+                        # # print("frame_estimated shape: ", frame_estimated.shape)
+                        # """visualize the initialized images"""
+                        # frame_gt_np = torch.Tensor.numpy(frame_tensor_gt_4d.detach().cpu())
+                        # sampled_frame_est_np = torch.Tensor.numpy(frame_estimated.detach().cpu())
+                        
+                        # grid_affine = F.affine_grid(theta= affine_transform_initial[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
+                        # vol_initialized = F.grid_sample(vol_tensor, grid_affine, align_corners=True)
+                        # img_moving = vol_initialized[:,:, int(volume_size[3]*0.5), :, :]
+                        # sampled_frame_ini_np = torch.Tensor.numpy(img_moving.detach().cpu())
+
+                        # affine_transform_gt = batch['tfm_RegS2V_gt_mat'].type(torch.FloatTensor).to(device)
+                        # grid_affine_gt = F.affine_grid(theta= affine_transform_gt[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
+                        # vol_gt = F.grid_sample(vol_tensor, grid_affine_gt, align_corners=True)
+                        # sampled_frame_gt = vol_gt[:,:, int(volume_size[3]*0.5), :, :]
+                        # sampled_frame_gt_np = torch.Tensor.numpy(sampled_frame_gt.detach().cpu())
+                        # # print("frame_gt_np",frame_gt_np.size)
+
+                        # fig = plt.figure(figsize=(16, 9))
+                        # ax1 = fig.add_subplot(141)
+                        # ax2 = fig.add_subplot(142)
+                        # ax3 = fig.add_subplot(143)
+                        # ax4 = fig.add_subplot(144)
+                        # ax1.imshow(frame_gt_np[0, 0, :, :], cmap = "gray")
+                        # ax1.set_title("US frame (target)")
+                        # ax2.imshow(sampled_frame_ini_np[0, 0, :, :], cmap = "gray")
+                        # ax2.set_title("Resampled image (initial)")
+                        # ax3.imshow(sampled_frame_est_np[0, 0, :, :], cmap = "gray")
+                        # ax3.set_title("Resampled image (est)")
+                        # ax4.imshow(sampled_frame_gt_np[0, 0, :, :], cmap = "gray")
+                        # ax4.set_title("Resampled image (gt)")
+                        # plt.show()
+
+
+                        # sys.exit()
+                        
+                        image_localNCC_loss, ROI = loss_localNCC(frame_estimated, frame_tensor_gt_4d)
+                        # print("image_localNCC_loss: ", image_localNCC_loss)
+                        # print("image_localNCC_loss device: ", image_localNCC_loss.device)
+                        # coefficients for loss functinos
+                        
+                        alpha = 1.0
+                        beta = 1.0
+                        gamma = 5.0
+                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        # loss_combined = image_localNCC_loss
+                        # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
+                        # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
+                        # print("loss_combined device (guess cuda): ", loss_combined.device)
+                        
+                        # backward + optimize only if in training phase    
+                        loss_combined.backward()
+                        optimizer.step()
+                        
+                        # print("loss_combined: ", loss_combined)
+                            
+                        
+                    # sys.exit()
+                    running_loss += loss_combined * actual_batch_size
+                    running_localNCC += image_localNCC_loss*actual_batch_size
+                    running_dof += (rotation_loss + translation_loss)*actual_batch_size
+                    nth_batch += 1
+                    torch.cuda.empty_cache()
+                    cur_lr = float(scheduler.get_last_lr()[0])
+                    # print(scheduler.get_last_lr())
+                    # print('{}/{}: Train-BATCH (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
+                    print('{}/{}: Train-BATCH (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.6f}(loss_translation), {:.4f}(loss_rotation)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, translation_loss, rotation_loss))
+                scheduler.step()
+                # sys.exit()
+                epoch_loss = running_loss / num_cases[phase]
+                epoch_running_localNCC = running_localNCC/num_cases[phase]
+                epoch_running_dof = running_dof/num_cases[phase]
+                tv_hist[phase].append([float(epoch_loss), float(epoch_running_localNCC), float(epoch_running_dof)])
+                # print('tv_hist\n{}'.format(tv_hist))
+                
+            else:
+                model.eval()
+                nth_batch = 0
+                for batch in validation_dataset_frame:
+                    """create the batch volume tensor. This way could significantly reduce the computation when preprocessing"""
+                    volume_size = validation_dateset_volume[0]['volume_name'].shape
+                    actual_batch_size = len(batch["volume_ID"])
+                    # vol_tensor = torch.zeros(actual_batch_size, volume_size[0], volume_size[1], volume_size[2], volume_size[3])
+
+                    """converting from N*C*W*H*D to N*C*D*H*W"""
+                    vol_tensor = torch.zeros(actual_batch_size, volume_size[0], volume_size[3], volume_size[2], volume_size[1])
+                    for i, volume_id in enumerate(batch["volume_ID"]):
+                        # print("volume_id: ", volume_id)
+                        vol_tensor[i, :, :, :, :] = torch.permute(validation_dateset_volume[volume_id]['volume_name'].type(torch.FloatTensor), (0, 3, 2, 1))   
+                    frame_tensor = torch.permute(batch["frame_name"].type(torch.FloatTensor), (0, 1, 4, 3, 2))
+                    # mat_tensor = batch["tfm_gt_diff_mat"].type(torch.FloatTensor)
+                    dof_tensor = batch["tfm_gt_diff_dof"].type(torch.FloatTensor)
+                    
+
+                    vol_tensor = vol_tensor.to(device)
+                    frame_tensor = frame_tensor.to(device)
+                    # mat_tensor = mat_tensor.to(device)
+                    dof_tensor = dof_tensor.to(device)
+
+                    frame_tensor_gt = torch.zeros((frame_tensor.shape))
+                    for i, frame_flip_flag in enumerate(batch["frame_flip_flag"]):
+                        if frame_flip_flag == "True":
+                            frame_tensor_gt[i, :,:, :, :] = torch.flip(frame_tensor[i, :, :,:, :], [3])
+                        else:
+                            frame_tensor_gt[i, :, :, :,:] = frame_tensor[i,:, :, :, :]
+                    frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
+
+                    # forward
+                    # track history if only in train
+                    with torch.set_grad_enabled(phase == 'train'):
+                        
+                        """initialized volume"""
+                        affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor).to(device)
+                        # affine_transform_initial = batch['tfm_RegS2V_initial_mat'].type(torch.FloatTensor)
+                        # grid_affine = F.affine_grid(theta= affine_transform_initial[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
+                        # vol_initialized = F.grid_sample(vol_tensor, grid_affine, align_corners=True)
+                        # img_moving = vol_initialized[:,:, int(volume_size[3]*0.5), :, :]
+                        frame_tensor_gt_4d = frame_tensor_gt.squeeze(2)
+                        vol_resampled, theta_list, delta_mat_accumulate_list = model(vol=vol_tensor, img_fixed=frame_tensor_gt_4d, initial_transform = affine_transform_initial) # shape batch_size*6
+                        
+                        # sys.exit()
+                        # cascaded_transform = calculate_cascaded_transform(theta_list, device)
+
+                        dof_estimated = tools.mat2dof_tensor(delta_mat_accumulate_list[-1])
+                        dof_estimated = dof_estimated.to(device)
+
+                        """rotation loss (deg)"""
+                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
+                        """translation loss (mm)"""
+                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
+
+                        """image intensity-based loss (localNCC)"""
+                        frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :]
+
+                        # frame_tensor_gt_4d = frame_tensor_gt.squeeze(2)
+                        # # print("frame_tensor shape: ", frame_tensor.shape)
+                        # frame_tensor_gt = torch.zeros((frame_tensor_4d.shape))
+                        # for i, frame_flip_flag in enumerate(batch["frame_flip_flag"]):
+                        #     if frame_flip_flag == "True":
+                        #         frame_tensor_gt[i, :, :, :] = torch.flip(frame_tensor_4d[i, :, :, :], [2])
+                        # frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
+                 
+                        ##############################################################
+                        # """visualize image (tested)"""
+                        # frame_gt_np = torch.Tensor.numpy(frame_tensor.detach().cpu())
+                        # frame_est_np = torch.Tensor.numpy(frame_estimated.detach().cpu())
+                        # plt.figure("visualize", (12,8))
+                        # plt.subplot(1,2,1)
+                        # plt.title("original image")
+                        # plt.imshow(frame_gt_np[0,0,:,:], cmap="gray")
+
+                        # plt.subplot(1,2,2)
+                        # plt.title("resampled image")
+                        # plt.imshow(frame_est_np[0,0,:,:], cmap="gray")
+                        # plt.show()
+
+                        # sys.exit()
+                        
+                        image_localNCC_loss, ROI = loss_localNCC(frame_estimated, frame_tensor_gt_4d)
+                        
+                        # coefficients for loss functinos
+                        # alpha = 1.0
+                        # beta = 2.0
+                        # gamma = 10.0
+                        # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        loss_combined = image_localNCC_loss
+                        # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
+                        # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
+                        # print("loss_combined device (guess cuda): ", loss_combined.device)
+                        
+                        # print("loss_combined: ", loss_combined)
+                            
+                        
+                    # sys.exit()
+                    running_loss += loss_combined * actual_batch_size
+                    running_localNCC += image_localNCC_loss*actual_batch_size
+                    running_dof += (rotation_loss + translation_loss)*actual_batch_size  
+                    nth_batch += 1
+                    
+                    # print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
+                    print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.6f}(loss_translation),  {:.4f}(loss_rotation)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, translation_loss, rotation_loss))
                 # sys.exit()
                 epoch_loss = running_loss / num_cases[phase]
                 epoch_running_localNCC = running_localNCC/num_cases[phase]
@@ -1245,10 +1557,11 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
 
     return tv_hist
 
+
 def train_nondeep_model(dataset_frame, dataset_volume, frame_index):
     
     """Pre-setting (same as ITK global one)"""
-    lr_localNCC = 0.01
+    lr_localNCC = 0.001
     num_iters = 100
     stop_thrld = 1e-4
 
@@ -1437,15 +1750,31 @@ if __name__ == '__main__':
         # sys.exit()
         num_cases = {'train': len(training_dataset_2DUS), 'val': len(validation_dataset_2DUS)}
         # Define the training model architecture
-        # model = RegS2Vnet.mynet3(layers=[3, 8, 36, 3]).to(device=device)
-        model = RegS2Vnet.RegS2Vnet_featurefusion(layers=[3, 3, 8, 3]).to(device=device)
-        if RESUME_MODEL:
-            # pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_1/", 'RegS2V_best_Generator_30.pth') # Yan et al.'s method pretrained model
-            pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_featurefusion/", 'RegS2V_feature_fusion_Generator_10.pth') # Yan et al.'s method pretrained model
-            model.load_state_dict(torch.load(pretrained_model, map_location=device))
-            print("RESUME model: {}".format(pretrained_model))
-        # tv_hist = train_model(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
-        tv_hist = train_model_initialized(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
+        if TRAINED_MODEL == 1:
+            model = RegS2Vnet.mynet3(layers=[3, 8, 36, 3]).to(device=device)
+            if RESUME_MODEL:
+                # pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_1/", 'RegS2V_best_Generator_30.pth') # Yan et al.'s method pretrained model
+                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_featurefusion/", 'RegS2V_feature_fusion_Generator_10.pth') # Yan et al.'s method pretrained model
+                # pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_plus_noise/", 'DeepS2VFF_training_scratch_5_dofonly.pth') #  pretrained model
+                model.load_state_dict(torch.load(pretrained_model, map_location=device))
+                print("RESUME model: {}".format(pretrained_model))
+            tv_hist = train_model(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
+        if TRAINED_MODEL == 2:
+            model = RegS2Vnet.RegS2Vnet_featurefusion(layers=[3, 3, 8, 3]).to(device=device)
+            if RESUME_MODEL:
+                
+                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_plus_noise/", 'DeepS2VFF_training_scratch_5_dofonly.pth') #  pretrained model
+                model.load_state_dict(torch.load(pretrained_model, map_location=device))
+                print("RESUME model: {}".format(pretrained_model))
+            tv_hist = train_model_initialized(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
+        
+        if TRAINED_MODEL == 3:
+            model = RegS2Vnet.DeepRCS2V(num_cascades=3, device= device)
+            if RESUME_MODEL:
+                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_featurefusion/", 'XXX.pth') # Yan et al.'s method pretrained model
+                model.load_state_dict(torch.load(pretrained_model, map_location=device))
+                print("RESUME model: {}".format(pretrained_model))
+            tv_hist = train_DeepRCS2V_model(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
         
         json_obj = json.dumps(tv_hist)
         f = open(os.path.join(output_dir, 'results_'+'{}.json'.format(now_str)), 'w')

@@ -28,7 +28,7 @@
 	<case_000>LHV\LHV-03\pre01_sweep04\LHV03_pre01_sweep04.xml</case_000>
 	<case_001>LHV\LHV-03\pre04_sweep04\LHV03_pre04_sweep04.xml</case_001>
 	<case_002>LHV\LHV-04\pre03_sweep03\LHV04_pre03_sweep03.xml</case_002>
-	<case_003>LHV\LHV-04\pre06_sweep02\LHV04_pre06_sweep02.xml</case_003>
+	<case_003>LHV\LHV-09\pre01_sweep01\LHV09_pre01_sweep01.xml</case_003>
 	<case_004>LHV\LHV-05\pre02_sweep04\LHV05_pre02_sweep04.xml</case_004>
 	<case_005>LHV\LHV-05\pre03_sweep03\LHV05_pre03_sweep03.xml</case_005>
 	<case_006>LHV\LHV-05\pre03_sweep04\LHV05_pre03_sweep04.xml</case_006>
@@ -40,8 +40,6 @@
 	<case_012>LHV\LHV-08\pre04_sweep01\LHV08_pre04_sweep01.xml</case_012>
 	<case_013>LHV\LHV-08\pre04_sweep02\LHV08_pre04_sweep02.xml</case_013>
 	<case_014>LHV\LHV-08\pre04_sweep04\LHV08_pre04_sweep04.xml</case_014>
-	<case_015>LHV\LHV-09\pre01_sweep01\LHV09_pre01_sweep01.xml</case_015>
-	
   </training_cases>
   
   <validation_cases category="directory">
@@ -52,6 +50,7 @@
   </validation_cases>
   
   <test_cases category="directory">
+  <case_000>LHV\LHV-04\pre06_sweep02\LHV04_pre06_sweep02.xml</case_000>
   <case_001>LPT\LPT-027\pre02_needle01\LPT027_pre02_needle01.xml</case_001>
   </test_cases>
 </Dataset_index>

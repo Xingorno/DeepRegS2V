@@ -120,7 +120,8 @@ class ResNetBottleneck2d(nn.Module):
         self.bn2 = norm_layer(width)
         self.conv3 = conv1x1(width, planes * self.expansion)
         self.bn3 = norm_layer(planes * self.expansion)
-        self.relu = nn.ReLU(inplace=True)
+        # self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.LeakyReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
 
@@ -163,7 +164,8 @@ class ResNetBottleneck3d(nn.Module):
         self.bn2 = norm_layer(width)
         self.conv3 = conv1x1_3d(width, planes * self.expansion)
         self.bn3 = norm_layer(planes * self.expansion)
-        self.relu = nn.ReLU(inplace=True)
+        # self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.LeakyReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
 
@@ -207,7 +209,8 @@ class mynet3(nn.Module):
         # self.conv4_vol = nn.Conv3d(64, 64, kernel_size=3, stride=(1, 1, 1), padding=(1, 1, 1), bias=False)
         self.bn1_vol = nn.BatchNorm3d(32)
         self.bn2_vol = nn.BatchNorm3d(64)
-        self.relu = nn.ReLU(inplace=True)
+        # self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.LeakyReLU(inplace=True)
         self.maxpool = nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
         # self.conv_pool = nn.Conv3d(64, 64, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
 
@@ -449,62 +452,123 @@ class RegS2Vnet_featurefusion(nn.Module):
         
         
 
+        # self.frame_encoder = nn.Sequential(
+        #     nn.Conv2d(1, 16, kernel_size=5, stride=1, padding=1),
+        #     nn.ReLU(),
+        #     ResNetBottleneck2d(16, 16),
+        #     nn.MaxPool2d(4),
+        #     nn.Conv2d(16, 32, kernel_size=5, stride=1, padding=1),
+        #     nn.ReLU(),
+        #     ResNetBottleneck2d(32, 32),
+        #     nn.MaxPool2d(4),
+        #     nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=1),
+        #     nn.ReLU(),
+        #     ResNetBottleneck2d(64, 64),
+        #     nn.MaxPool2d(3),
+        #     nn.Conv2d(64, 64, kernel_size=5, stride=1, padding=1),
+        #     nn.ReLU(),
+        #     ResNetBottleneck2d(64, 64),
+        #     nn.MaxPool2d(3)
+        #     # nn.Flatten(1,3)
+        # )
         self.frame_encoder = nn.Sequential(
             nn.Conv2d(1, 16, kernel_size=5, stride=1, padding=1),
-            nn.ReLU(),
+            nn.LeakyReLU(inplace=True),
             ResNetBottleneck2d(16, 16),
             nn.MaxPool2d(4),
             nn.Conv2d(16, 32, kernel_size=5, stride=1, padding=1),
-            nn.ReLU(),
+            nn.LeakyReLU(inplace=True),
             ResNetBottleneck2d(32, 32),
             nn.MaxPool2d(4),
             nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=1),
-            nn.ReLU(),
+            nn.LeakyReLU(inplace=True),
             ResNetBottleneck2d(64, 64),
             nn.MaxPool2d(3),
             nn.Conv2d(64, 64, kernel_size=5, stride=1, padding=1),
-            nn.ReLU(),
+            nn.LeakyReLU(inplace=True),
             ResNetBottleneck2d(64, 64),
             nn.MaxPool2d(3)
             # nn.Flatten(1,3)
         )
         self.frame_flatten = nn.Flatten(1, 3)
+        # self.volume_encoder = nn.Sequential(
+        #     nn.Conv3d(1, 16, kernel_size=5, stride=1, padding=1),
+        #     nn.ReLU(),
+        #     ResNetBottleneck3d(16, 16),
+        #     nn.MaxPool3d((2, 4, 4)),
+        #     nn.Conv3d(16, 32, kernel_size=5, stride=1, padding=1),
+        #     nn.ReLU(),
+        #     ResNetBottleneck3d(32, 32),
+        #     nn.MaxPool3d((2, 4, 4)),
+        #     nn.Conv3d(32, 64, kernel_size=5, stride=1, padding=1),
+        #     nn.ReLU(),
+        #     ResNetBottleneck3d(64, 64),
+        #     nn.MaxPool3d((2, 3, 3)),
+        #     nn.Conv3d(64, 64, kernel_size=5, stride=1, padding=1),
+        #     nn.ReLU(),
+        #     ResNetBottleneck3d(64, 64),
+        #     nn.MaxPool3d((2, 3, 3)),
+        #     # nn.Flatten(3,4)
+        # )
         self.volume_encoder = nn.Sequential(
             nn.Conv3d(1, 16, kernel_size=5, stride=1, padding=1),
-            nn.ReLU(),
+            nn.LeakyReLU(inplace=True),
             ResNetBottleneck3d(16, 16),
             nn.MaxPool3d((2, 4, 4)),
             nn.Conv3d(16, 32, kernel_size=5, stride=1, padding=1),
-            nn.ReLU(),
+            nn.LeakyReLU(inplace=True),
             ResNetBottleneck3d(32, 32),
             nn.MaxPool3d((2, 4, 4)),
             nn.Conv3d(32, 64, kernel_size=5, stride=1, padding=1),
-            nn.ReLU(),
+            nn.LeakyReLU(inplace=True),
             ResNetBottleneck3d(64, 64),
             nn.MaxPool3d((2, 3, 3)),
             nn.Conv3d(64, 64, kernel_size=5, stride=1, padding=1),
-            nn.ReLU(),
+            nn.LeakyReLU(inplace=True),
             ResNetBottleneck3d(64, 64),
             nn.MaxPool3d((2, 3, 3)),
             # nn.Flatten(3,4)
         )
         self.vol_flatten = nn.Flatten(2, 4)
 
+        # self.decoder = nn.Sequential(
+        #     nn.Conv3d(1, 32, kernel_size=3, stride=1, padding='same'),
+        #     nn.ReLU(),
+        #     ResNetBottleneck3d(32, 32),
+        #     nn.MaxPool3d((1, 3, 3)),
+        #     nn.Conv3d(32, 64, kernel_size=3, stride=1, padding='same'),
+        #     nn.ReLU(),
+        #     ResNetBottleneck3d(64, 64),
+        #     nn.MaxPool3d((1, 3, 3)),
+        #     nn.Conv3d(64, 128, kernel_size=3, stride=1, padding='same'),
+        #     nn.ReLU(),
+        #     ResNetBottleneck3d(128, 128),
+        #     nn.MaxPool3d((1, 3, 3)),
+        #     nn.Conv3d(128, 256, kernel_size=3, stride=1, padding='same'),
+        #     nn.ReLU(),
+        #     ResNetBottleneck3d(256, 256),
+        #     # nn.MaxPool3d((1, 3, 3)),
+        #     # nn.Conv3d(256, 256, kernel_size=3, stride=1, padding=1),
+        #     # nn.ReLU(),
+        #     # ResNetBottleneck3d(256, 256),
+        #     nn.AvgPool3d((2, 2, 2))
+        # )
+
         self.decoder = nn.Sequential(
             nn.Conv3d(1, 32, kernel_size=3, stride=1, padding='same'),
-            nn.ReLU(),
+            nn.LeakyReLU(inplace=True),
             ResNetBottleneck3d(32, 32),
             nn.MaxPool3d((1, 3, 3)),
             nn.Conv3d(32, 64, kernel_size=3, stride=1, padding='same'),
-            nn.ReLU(),
+            nn.LeakyReLU(inplace=True),
             ResNetBottleneck3d(64, 64),
             nn.MaxPool3d((1, 3, 3)),
             nn.Conv3d(64, 128, kernel_size=3, stride=1, padding='same'),
-            nn.ReLU(),
+            nn.LeakyReLU(inplace=True),
             ResNetBottleneck3d(128, 128),
             nn.MaxPool3d((1, 3, 3)),
             nn.Conv3d(128, 256, kernel_size=3, stride=1, padding='same'),
-            nn.ReLU(),
+            nn.LeakyReLU(inplace=True),
             ResNetBottleneck3d(256, 256),
             # nn.MaxPool3d((1, 3, 3)),
             # nn.Conv3d(256, 256, kernel_size=3, stride=1, padding=1),
@@ -512,7 +576,8 @@ class RegS2Vnet_featurefusion(nn.Module):
             # ResNetBottleneck3d(256, 256),
             nn.AvgPool3d((2, 2, 2))
         )
-        self.relu = nn.ReLU(inplace=True)
+        # self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.LeakyReLU(inplace=True)
         self.fc0 = nn.Linear(1536, 1024)
         self.fc1 = nn.Linear(1024, 256)
         self.fc2 = nn.Linear(256, 6)
@@ -631,3 +696,119 @@ class RegS2Vnet_featurefusion(nn.Module):
         return vol_resampled, x
 
 
+
+class DeepF2F(nn.Module):
+    """Frame-to-frame registration network"""
+    def __init__(self, shared_weight = True, device = "cuda:0"):
+        super(DeepF2F, self).__init__()
+        self.shared_weight = shared_weight
+        self.device = device
+        self.frame_encoder = nn.Sequential(
+            nn.Conv2d(2, 16, kernel_size=3, stride = 1, padding='valid'),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck2d(16, 16),
+            nn.MaxPool2d(4),
+            nn.Conv2d(16, 32, kernel_size=3, stride = 1, padding='valid'),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck2d(32, 32),
+            nn.MaxPool2d(3),
+            nn.Conv2d(32, 64, kernel_size=3, stride = 1, padding='valid'),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck2d(64, 64),
+            nn.MaxPool2d(3),
+            nn.Conv2d(64, 128, kernel_size=3, stride = 1, padding='valid'),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck2d(128, 128),
+            nn.AvgPool2d(2)
+        )
+        self.relu = nn.LeakyReLU(inplace=True)
+        self.fc0 = nn.Linear(1024, 512)
+        self.fc1 = nn.Linear(512, 256)
+        self.fc2 = nn.Linear(256, 6)
+
+    def forward(self, img_fixed, img_moving):
+        if self.shared_weight:
+            img_combined = torch.cat((img_fixed, img_moving), dim = 1) # N*1*W*H -> N*2*W*H
+            img_combined.to(self.device)
+            # print("img_combined:{}".format(img_combined.shape))
+            x = self.frame_encoder(img_combined)
+            # print("x shape: {}".format(x.shape))
+            x = x.view(x.size(0), -1)
+            x = self.fc0(x)
+            x = self.fc1(x)
+            x = self.fc2(x)
+            # print("x shape: {}".format(x.shape))
+            return x
+
+class STN(nn.Module):
+    def __init__(self, device = "cuda:0"):
+        super(STN, self).__init__()
+        self.device = device
+        
+    def forward(self, vol, initial_transform =None, delta_mat_accumulate_list = None):
+        # print("self.correction_transform device : {}".format(self.correction_transform.device))
+    
+        if delta_mat_accumulate_list == None:
+            affine_transform_combined = initial_transform
+            # affine_transform_combined.to(self.device)
+            affine_transform_combined.require_grad = False
+            grid_affine = F.affine_grid(theta= affine_transform_combined[:, 0:3, :], size = vol.shape, align_corners=True)
+            vol_resampled = F.grid_sample(vol, grid_affine, align_corners=True)
+            vol_resampled.to(self.device)
+            # print("vol_resampled (requires_grad): {}".format(vol_resampled.requires_grad))
+        else:
+            # print("self.correction_transform: {}".format(self.correction_transform))
+            # print("correction_transform_: {}".format(correction_transform_))
+            
+            affine_transform_combined = torch.matmul(delta_mat_accumulate_list[-1], initial_transform)
+            # affine_transform_combined.to(self.device)
+            grid_affine = F.affine_grid(theta= affine_transform_combined[:, 0:3, :], size = vol.shape, align_corners=True)
+            vol_resampled = F.grid_sample(vol, grid_affine, align_corners=True)
+            vol_resampled.to(self.device)
+        
+
+        return vol_resampled
+
+class DeepRCS2V(nn.Module):
+    """Deep recursive cascaded slice-to-volume registration"""
+    def __init__(self, num_cascades, device = "cuda:0"):
+        super(DeepRCS2V, self).__init__()
+        self.num_cascades = num_cascades
+        self.device = device
+        self.stems = []
+        
+        # self.stems.append(DeepF2F(shared_weight = True))
+        for i in range(num_cascades):
+            self.stems.append(DeepF2F(shared_weight =True))
+        for model in self.stems:
+            model.to(self.device)
+        
+        self.spatial_transformer = STN(self.device)
+        
+    
+    def forward(self, vol, img_fixed, initial_transform):
+        theta_list = []
+        delta_mat_accumulate_list = []
+        for index, model in enumerate(self.stems):
+            if index == 0:
+                vol_sampled = self.spatial_transformer(vol, initial_transform = initial_transform)
+                theta = model(img_fixed, vol_sampled[:,:,int(vol_sampled.shape[2]*0.5),:,:])
+                delta_mat_accumulate = tools.dof2mat_tensor(input_dof=theta).type(torch.FloatTensor)
+                delta_mat_accumulate= delta_mat_accumulate.to(self.device)
+                delta_mat_accumulate_list.append(delta_mat_accumulate)
+            else:
+                vol_sampled = self.spatial_transformer(vol, initial_transform = initial_transform, delta_mat_accumulate_list = delta_mat_accumulate_list)
+                theta = model(img_fixed, vol_sampled[:,:,int(vol_sampled.shape[2]*0.5),:,:])
+                delta_mat = tools.dof2mat_tensor(input_dof=theta).type(torch.FloatTensor)
+                delta_mat = delta_mat.to(self.device)
+                delta_mat_accumulate = torch.matmul(delta_mat, delta_mat_accumulate_list[-1])
+                delta_mat_accumulate_list.append(delta_mat_accumulate)
+            # print("accumulate mat: {}".format(delta_mat_accumulate_list))
+            
+            theta_list.append(theta)
+            # print("theta_list: {}".format(theta_list))
+            # print("theta_list: {}".format(theta_list))
+            
+        vol_sampled = self.spatial_transformer(vol, initial_transform = initial_transform, delta_mat_accumulate_list = delta_mat_accumulate_list)
+        
+        return vol_sampled, theta_list, delta_mat_accumulate_list
