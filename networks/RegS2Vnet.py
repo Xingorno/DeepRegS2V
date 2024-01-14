@@ -696,7 +696,172 @@ class RegS2Vnet_featurefusion(nn.Module):
         return vol_resampled, x
 
 
+class RegS2Vnet_featurefusion_simplified(nn.Module):
+    def __init__(self):
+        self.inplanes = 1
+        super(RegS2Vnet_featurefusion_simplified, self).__init__()
+        """ Balance """
+        # print("layers", layers)
+        
+        self.frame_encoder = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            # ResNetBottleneck2d(16, 16),
+            nn.MaxPool2d(4),
+            nn.Dropout2d(0.5),
+            nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            # ResNetBottleneck2d(32, 32),
+            nn.MaxPool2d(4),
+            nn.Dropout2d(0.5),
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            # ResNetBottleneck2d(64, 64),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.5),
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            # ResNetBottleneck2d(64, 64),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.5),
+            nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            
+        )
+        self.frame_flatten = nn.Flatten(1, 3)
+        self.volume_encoder = nn.Sequential(
+            nn.Conv3d(1, 16, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            # ResNetBottleneck3d(16, 16),
+            nn.MaxPool3d((2, 4, 4)),
+            nn.Dropout3d(0.5),
+            nn.Conv3d(16, 32, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            # ResNetBottleneck3d(32, 32),
+            nn.MaxPool3d((2, 4, 4)),
+            nn.Dropout3d(0.5),
+            nn.Conv3d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            # ResNetBottleneck3d(64, 64),
+            nn.MaxPool3d((2, 2, 2)),
+            nn.Dropout3d(0.5),
+            nn.Conv3d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            # ResNetBottleneck3d(64, 64),
+            nn.MaxPool3d((2, 2, 2)),
+            nn.Dropout3d(0.5),
+            nn.Conv3d(128, 64, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(),
 
+            # nn.Flatten(3,4)
+        )
+        self.vol_flatten = nn.Flatten(2, 4)
+
+        self.decoder = nn.Sequential(
+            nn.Conv3d(1, 16, kernel_size=3, stride=1, padding='same'),
+            nn.LeakyReLU(),
+            # ResNetBottleneck3d(32, 32),
+            nn.MaxPool3d((1, 4, 4)),
+            nn.Dropout3d(0.5),
+            nn.Conv3d(16, 32, kernel_size=3, stride=1, padding='same'),
+            nn.LeakyReLU(),
+            # ResNetBottleneck3d(64, 64),
+            nn.MaxPool3d((1, 4, 4)),
+            nn.Dropout3d(0.5),
+            nn.Conv3d(32, 64, kernel_size=3, stride=1, padding='same'),
+            nn.LeakyReLU(),
+            # ResNetBottleneck3d(128, 128),
+            nn.MaxPool3d((1, 3, 3)),
+            nn.Dropout3d(0.5),
+            nn.Conv3d(64, 128, kernel_size=3, stride=1, padding='same'),
+            nn.LeakyReLU(),
+            # ResNetBottleneck3d(256, 256),
+            # nn.MaxPool3d((1, 3, 3)),
+            # nn.Conv3d(256, 256, kernel_size=3, stride=1, padding=1),
+            # nn.ReLU(),
+            # ResNetBottleneck3d(256, 256),
+            nn.AvgPool3d((3, 3, 3))
+        )
+        self.relu = nn.LeakyReLU()
+        self.dropout = nn.Dropout1d(0.5)
+        self.fc0 = nn.Linear(1024, 256)
+        self.fc1 = nn.Linear(256, 64)
+        self.fc2 = nn.Linear(64, 6)
+
+
+    def forward(self, vol, frame, initial_transform, device=None):
+        input_vol = vol.clone()
+        show_size = True
+        if show_size:
+            # vol = self.volBranch(vol)
+            # frame = self.frameBranch(frame)
+            # print('\n********* Frame encoder*********')
+            # print('frame {}'.format(frame.shape))
+            frame = frame.squeeze(1)
+            # print('squeeze {}'.format(frame.shape))
+            frame = self.frame_encoder(frame)
+            # print('frame {}'.format(frame.shape))
+            
+            # print('\n********* Vol *********')
+            # print('vol {}'.format(vol.shape))
+            vol = self.volume_encoder(vol)
+            # print('vol {}'.format(vol.shape))
+            
+            # """ combining the frame features and volume features"""
+            # frame: batch_size X channel x h_feature x w_feature
+            # vol: batch_size x channel x d_feature x h_feature x w_feature
+
+            frame = self.frame_flatten(frame)
+            # print('frame {}'.format(frame.shape))
+            vol = torch.permute(vol, (0, 2, 1, 3, 4))
+            # print('vol permuted shape {}'.format(vol.shape))
+            
+            vol = self.vol_flatten(vol)
+            # print('vol shape {}'.format(vol.shape))
+
+            x = torch.einsum('ijk, il->ijkl', vol, frame)
+            # print('vol_combined_feature shape {}'.format(x.shape))
+            x = x.unsqueeze(1)
+            # print('vol_combined_feature {}'.format(x.shape))
+            
+            
+            """ResNet to docoding"""
+            x = self.decoder(x)
+            # print('output x {}'.format(x.shape))
+
+            x = x.view(x.size(0), -1)
+            x = x.unsqueeze(1)
+            # print('view {}'.format(x.shape))
+            # sys.exit()
+            x = self.dropout(x)
+            x = self.fc0(x)
+            # print('fc0 {}'.format(x.shape))
+            x = self.relu(x)
+            x = self.dropout(x)
+
+            x = self.fc1(x)
+            # print('fc1 {}'.format(x.shape))
+            x = self.relu(x)
+            x = self.dropout(x)
+            x = self.fc2(x)
+            # print('fc2 {}'.format(x.shape))
+            # sys.exit()
+            """ add the correction transformation"""
+            # print('output x {}'.format(x.shape))
+            x = x.squeeze(1)
+            # x_ = torch.zeros(1, 6)
+            correction_transform = tools.dof2mat_tensor(input_dof=x).type(torch.FloatTensor).to(device)
+
+
+            grid_affine = F.affine_grid(theta= correction_transform[:, 0:3, :], size = input_vol.shape, align_corners=True)
+            
+            vol_resampled = F.grid_sample(input_vol, grid_affine, align_corners=True)
+                        
+            # sys.exit()
+            
+        return vol_resampled, x
+    
+    
 class DeepF2F(nn.Module):
     """Frame-to-frame registration network"""
     def __init__(self, shared_weight = True, device = "cuda:0"):

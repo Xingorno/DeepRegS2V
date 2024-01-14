@@ -88,7 +88,7 @@ parser.add_argument('-e', '--epochs',
 parser.add_argument('-b', '--batch_size',
                     type=int,
                     help='number of batch size',
-                    default=2)
+                    default=8)
 
 parser.add_argument('-n', '--network_type',
                     type=str,
@@ -115,7 +115,7 @@ batch_size = args.batch_size
 num_epochs = args.epochs
 
 project_dir = os.getcwd()
-output_dir = os.path.join(project_dir, "src/outputs_DeepRCS2C_3_weakly_supervised")
+output_dir = os.path.join(project_dir, "src/outputs_DeepS2VFF_simplified_unsupervised")
 isExist = os.path.exists(output_dir)
 if not isExist:
     os.makedirs(output_dir)
@@ -123,10 +123,10 @@ if not isExist:
 DEEP_MODEL = True
 NONDEEP_MODEL = False
 RESUME_MODEL = False
-TRAINED_MODEL = 3
-trained_model_list = {'1': 'FVnet-supervised', '2': 'DeepS2VFF', '3':'DeepRCS2V'}
+TRAINED_MODEL = 4
+trained_model_list = {'1': 'FVnet-supervised', '2': 'DeepS2VFF', '3':'DeepRCS2V', '4':"DeepS2VFF_simplified"}
 # net = 'DeepS2VFF_refine_leakyReLU_localNCC'
-net = 'DeepRCS2C_weakly_supervised'
+net = 'DeepS2VFF_simplified'
 
 addNoise = True
 
@@ -889,8 +889,14 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
     loss_mse = nn.MSELoss()
     # loss_localNCC = LocalNormalizedCrossCorrelationLoss(spatial_dims=2, kernel_size= 13, kernel_type="rectangular", reduction="mean")
     # loss_localNCC = loss_F.LocalNCC(device = device, kernel_size =(71, 71), stride=(1, 1), padding="valid", win_eps= 100)
-    kernel_size = 91
+    
+    # setting 1: larger image size [400, 320, 240]
+    # kernel_size = 91
+
+    # setting 2: volume size [200, 160, 120]
+    kernel_size = 51
     loss_localNCC = loss_F.LocalNCC_new(device = device, kernel_size =(kernel_size, kernel_size), stride=(2, 2), padding="valid", win_eps= 0.98)
+
     if args.training_mode == 'finetune':
         # overwrite the learning rate for finetune
         lr = 5e-6
@@ -955,9 +961,9 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
 
                     vol_tensor = vol_tensor.to(device)
                     # frame_tensor = frame_tensor.to(device)
-                    mat_tensor = mat_tensor.to(device)
+                    # mat_tensor = mat_tensor.to(device)
                     dof_tensor = dof_tensor.to(device)
-                    mat_tensor.require_grad = True
+                    # mat_tensor.require_grad = True
                     dof_tensor.require_grad = True
 
                     """normalize the flip of frame image"""
@@ -1046,12 +1052,13 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         # print("image_localNCC_loss device: ", image_localNCC_loss.device)
                         # coefficients for loss functinos
                         
-                        # alpha = 1.0
-                        # beta = 1.0
-                        # gamma = 5.0
-                        # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        alpha = 1.0
+                        beta = 1.0
+                        gamma = 5.0
+                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
 
-                        loss_combined = image_localNCC_loss
+                        # loss_combined = image_localNCC_loss
+                        # loss_combined = rotation_loss + translation_loss
                         # loss_combined = alpha*rotation_loss + beta*translation_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
                         # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
@@ -1207,7 +1214,7 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     best_ep = epoch
                     print('**** best model updated with loss={:.4f} ****'.format(lowest_loss))
                 if epoch%5 == 0 and epoch != 0:
-                    fn_save = path.join(output_dir, '{}_{}_unsupervised.pth'.format(net, epoch))
+                    fn_save = path.join(output_dir, '{}_{}_dof_supervised.pth'.format(trained_model_list[str(TRAINED_MODEL)], epoch))
                     torch.save(model.state_dict(), fn_save)
                 
                 torch.cuda.empty_cache()    
@@ -1536,7 +1543,7 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
                     best_ep = epoch
                     print('**** best model updated with loss={:.4f} ****'.format(lowest_loss))
                 if epoch%5 == 0 and epoch != 0:
-                    fn_save = path.join(output_dir, '{}_{}.pth'.format(net, epoch))
+                    fn_save = path.join(output_dir, '{}_{}.pth'.format(trained_model_list[str(TRAINED_MODEL)], epoch))
                     torch.save(model.state_dict(), fn_save)
                 
                 torch.cuda.empty_cache()    
@@ -1702,9 +1709,15 @@ if __name__ == '__main__':
     validation_dataset_dict, validation_volume_dict = CreateLookupTable(validation_cases_metadata, project_dir= project_dir, phase= "val", save_flag=True)
     
     """preprocessing the dataset(volume data, 2D US frame data and transformation data)"""
-    resample_spacing = 0.5
+    # """preprocessing: setting 1"""
+    # resample_spacing = 0.5
+    # resize_scale = 1/resample_spacing
+    # volume_size = [400, 320, 240]
+
+    """preprocessing: setting 2"""
+    resample_spacing = 1
     resize_scale = 1/resample_spacing
-    volume_size = [400, 320, 240]
+    volume_size = [200, 160, 120]
 
     # preprocess the 3D US volume data
     transform_3DUS = Compose(
@@ -1723,15 +1736,15 @@ if __name__ == '__main__':
     # prepocess the 2D US and registration transformation data
     transform_2DUS = Compose(
         [
-            LoadRegistrationTransformd(keys=["tfm_RegS2V"], scale=2, volume_size=volume_size),
+            LoadRegistrationTransformd(keys=["tfm_RegS2V"], scale=resize_scale, volume_size=volume_size),
             LoadImaged(keys=["frame_name", "frame_mask_name"], reader=ITKReader(reverse_indexing=False, affine_lps_to_ras=False), image_only=False),
             # MaskIntensityd(keys=["image","image_mask"], mask_data= mask_image_array),
-            MaskIntensityd(keys=["frame_name"], mask_key= "frame_mask_name"),
-            EnsureChannelFirstd(keys = ["frame_name"]),
-            Spacingd(keys=["frame_name"], pixdim=(resample_spacing, resample_spacing, resample_spacing), mode=("bilinear")),
-            SpatialPadd(keys=["frame_name"], spatial_size=[volume_size[0], volume_size[1], 1], method="symmetric", mode="constant"),
-            CenterSpatialCropd(keys=["frame_name"], roi_size=[volume_size[0], volume_size[1], 1]), # when the spacing is 0.5*0.5*0.5
-            ScaleIntensityd(keys=["frame_name"], minv= 0.0, maxv = 1.0, dtype= np.float32)
+            MaskIntensityd(keys=["frame_name", "frame_mask_name"], mask_key= "frame_mask_name"),
+            EnsureChannelFirstd(keys = ["frame_name", "frame_mask_name"]),
+            Spacingd(keys=["frame_name", "frame_mask_name"], pixdim=(resample_spacing, resample_spacing, resample_spacing), mode=("bilinear")),
+            SpatialPadd(keys=["frame_name", "frame_mask_name"], spatial_size=[volume_size[0], volume_size[1], 1], method="symmetric", mode="constant"),
+            CenterSpatialCropd(keys=["frame_name", "frame_mask_name"], roi_size=[volume_size[0], volume_size[1], 1]), # when the spacing is 0.5*0.5*0.5
+            ScaleIntensityd(keys=["frame_name", "frame_mask_name"], minv= 0.0, maxv = 1.0, dtype= np.float32)
         ]
     )
     
@@ -1744,7 +1757,7 @@ if __name__ == '__main__':
     
 
     if DEEP_MODEL:
-        training_dataloader_2DUS = DataLoader(dataset=training_dataset_2DUS, batch_size=batch_size, shuffle=False)
+        training_dataloader_2DUS = DataLoader(dataset=training_dataset_2DUS, batch_size=batch_size, shuffle=True)
         validation_dataloader_2DUS = DataLoader(dataset=validation_dataset_2DUS, batch_size=batch_size, shuffle=False)
         # print("number of cases: ", len(training_dataset_2DUS))
         # sys.exit()
@@ -1771,11 +1784,19 @@ if __name__ == '__main__':
         if TRAINED_MODEL == 3:
             model = RegS2Vnet.DeepRCS2V(num_cascades=3, device= device)
             if RESUME_MODEL:
-                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_featurefusion/", 'XXX.pth') # Yan et al.'s method pretrained model
+                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_featurefusion/", 'XXX.pth') # 
                 model.load_state_dict(torch.load(pretrained_model, map_location=device))
                 print("RESUME model: {}".format(pretrained_model))
             tv_hist = train_DeepRCS2V_model(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
         
+        if TRAINED_MODEL == 4:
+            model = RegS2Vnet.RegS2Vnet_featurefusion_simplified().to(device=device)
+            if RESUME_MODEL:
+                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_featurefusion/", 'XXX.pth') # 
+                model.load_state_dict(torch.load(pretrained_model, map_location=device))
+                print("RESUME model: {}".format(pretrained_model))
+            tv_hist = train_model_initialized(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
+
         json_obj = json.dumps(tv_hist)
         f = open(os.path.join(output_dir, 'results_'+'{}.json'.format(now_str)), 'w')
         # write json object to file
