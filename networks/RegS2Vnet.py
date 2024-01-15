@@ -850,10 +850,16 @@ class RegS2Vnet_featurefusion_simplified(nn.Module):
             # print('output x {}'.format(x.shape))
             x = x.squeeze(1)
             # x_ = torch.zeros(1, 6)
-            correction_transform = tools.dof2mat_tensor(input_dof=x).type(torch.FloatTensor).to(device)
+            # non-normalized transformation
+            correction_transform = tools.dof2mat_tensor(input_dof=x).type(torch.FloatTensor)
+            correction_transform = correction_transform.to(device)
 
+            volume_size = [input_vol.shape[4], input_vol.shape[3], input_vol.shape[2]]
+            # calcuate normalized transform
+            correction_transform_torch = transform_conversion_ITK_torch_to_pytorch(correction_transform, volume_size= volume_size, device=device) # normlized to STN format
+            
 
-            grid_affine = F.affine_grid(theta= correction_transform[:, 0:3, :], size = input_vol.shape, align_corners=True)
+            grid_affine = F.affine_grid(theta= correction_transform_torch[:, 0:3, :], size = input_vol.shape, align_corners=True)
             
             vol_resampled = F.grid_sample(input_vol, grid_affine, align_corners=True)
                         
@@ -861,7 +867,7 @@ class RegS2Vnet_featurefusion_simplified(nn.Module):
             
         return vol_resampled, x
     
-    
+
 class DeepF2F(nn.Module):
     """Frame-to-frame registration network"""
     def __init__(self, shared_weight = True, device = "cuda:0"):
@@ -977,3 +983,34 @@ class DeepRCS2V(nn.Module):
         vol_sampled = self.spatial_transformer(vol, initial_transform = initial_transform, delta_mat_accumulate_list = delta_mat_accumulate_list)
         
         return vol_sampled, theta_list, delta_mat_accumulate_list
+
+
+def transform_conversion_ITK_torch_to_pytorch(affine_transform_ITK_torch, volume_size, device):
+    # note: affine_transform_ITK (to parent)
+    """to achieve the conversion of transform from the ITK transformation to pytorch transformation"""
+    """For the input and output objects, both of them are rescaled to spacing (1mm, 1mm, 1mm) and recentered the volume, which is to fake the pytorch transform"""
+    """For the pytorch, the input and output are the tensors, which don't have the spacing information, so we can treat them as 1."""
+    """To understand how the transform_ITK and transform_pytorch can work well and know the relationship, we need to bring anther package (Scipy) to help us"""
+    """The conversion workflow is: transform_ITK -> transform_scipy -> transform_pytorch"""
+    """For the scipy, the input and outout dont have the spacing information neither, which are the same as the pytorch transform. Differently, the input and output are represented as [1, 2,..., N_w] by [1, 2, ..., N_h] by [1, 2, ..., N_d].
+    And the transform_scipy is applied around the first voxel [0, 0, 0] by default. If the volume center is set as the (0, 0, 0) in spatial domain, we need to translate the transform_ITK to the center of volume first T_translate, 
+    then apply the transform_ITK, after that, we need to translate back the object."""
+    """For the pytorch, the transformation is similiar as the transform_scipy. Differently, the input and ouput need to be normalized first. That means that instead of representing by [1, 2,..., N_w] by [1, 2, ..., N_h] by [1, 2, ..., N_d], 
+    the input and output are represented by [-1,,..., 0, ..., 1] by [-1,,..., 0, ..., 1] by [-1,,..., 0, ..., 1]. For the numpy array input, the grid_sample will recoginize them as 
+    [-N_w/2, ..., -2, -1, 0, 1, 2, ..., N_w/2] by [-N_h/2, ..., -2, -1, 0, 1, 2, ..., N_h/2] by [-N_d/2, ..., -2, -1, 0, 1, 2, ..., N_d/2]"""
+    
+    # print(image_array_volume)
+    # affine_transform_ITK = data_2DUS[21]["tfm_RegS2V_gt_mat"].numpy()
+    # affine_transform = np.array([[np.cos(45*np.pi/180), -np.sin(45*np.pi/180), 0, 0], [np.sin(45*np.pi/180), np.cos(45*np.pi/180), 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) # LPS to parent
+
+    affine_transform_inverse = torch.linalg.inv(affine_transform_ITK_torch)
+    
+    # affine_transform_inverse = np.linalg.inv(affine_transform_ITK) # for the grid_sampling, the transform is inversed
+    """transform_scipy -> transform_pytorch"""
+    # T_normalized = np.array([[2/volume_size[0], 0, 0, -1], [0, 2/volume_size[1], 0, -1], [0, 0, 2/volume_size[2], -1], [0, 0, 0, 1]]) # LPS to parent
+    # T_normalized = np.array([[2/volume_size[0], 0, 0, 0], [0, 2/volume_size[1], 0, 0], [0, 0, 2/volume_size[2], 0], [0, 0, 0, 1]]) # LPS to parent
+    T_normalized = torch.tensor([[2/volume_size[0], 0.0, 0.0, 0.0], [0.0, 2/volume_size[1], 0.0, 0.0], [0.0, 0.0, 2/volume_size[2], 0.0], [0.0, 0.0, 0.0, 1.0]]).type(torch.FloatTensor)
+    T_normalized = T_normalized.to(device)
+    # affine_transform_pytorch = T_normalized @ affine_transform_inverse @ np.linalg.inv(T_normalized)
+    affine_transform_pytorch = T_normalized @ affine_transform_inverse @ torch.linalg.inv(T_normalized)
+    return affine_transform_pytorch # 4 by 4
