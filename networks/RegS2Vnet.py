@@ -789,24 +789,24 @@ class RegS2Vnet_featurefusion_simplified(nn.Module):
         self.fc2 = nn.Linear(64, 6)
 
 
-    def forward(self, vol, frame, initial_transform, device=None):
+    def forward(self, vol, frame, initial_transform, vol_original, device=None):
         input_vol = vol.clone()
         show_size = True
         if show_size:
             # vol = self.volBranch(vol)
             # frame = self.frameBranch(frame)
             # print('\n********* Frame encoder*********')
-            # print('frame {}'.format(frame.shape))
+            # print('frame {}'.format(frame[0,0,0, 100:102, 100:102]))
             frame = frame.squeeze(1)
             # print('squeeze {}'.format(frame.shape))
             frame = self.frame_encoder(frame)
             # print('frame {}'.format(frame.shape))
-            
+            # print("frame encoder output: ", frame)
             # print('\n********* Vol *********')
-            # print('vol {}'.format(vol.shape))
+            # print('vol {}'.format(vol[0, 0, 0, 100:102, 100:102]))
             vol = self.volume_encoder(vol)
             # print('vol {}'.format(vol.shape))
-            
+            # print("volume encoder output: ", vol)            
             # """ combining the frame features and volume features"""
             # frame: batch_size X channel x h_feature x w_feature
             # vol: batch_size x channel x d_feature x h_feature x w_feature
@@ -827,7 +827,7 @@ class RegS2Vnet_featurefusion_simplified(nn.Module):
             
             """ResNet to docoding"""
             x = self.decoder(x)
-            # print('output x {}'.format(x.shape))
+            # print('output x {}'.format(x))
 
             x = x.view(x.size(0), -1)
             x = x.unsqueeze(1)
@@ -835,12 +835,12 @@ class RegS2Vnet_featurefusion_simplified(nn.Module):
             # sys.exit()
             x = self.dropout(x)
             x = self.fc0(x)
-            # print('fc0 {}'.format(x.shape))
+            # print('fc0 {}'.format(x))
             x = self.relu(x)
             x = self.dropout(x)
 
             x = self.fc1(x)
-            # print('fc1 {}'.format(x.shape))
+            # print('fc1 {}'.format(x))
             x = self.relu(x)
             x = self.dropout(x)
             x = self.fc2(x)
@@ -848,20 +848,29 @@ class RegS2Vnet_featurefusion_simplified(nn.Module):
             # sys.exit()
             """ add the correction transformation"""
             # print('output x {}'.format(x.shape))
-            x = x.squeeze(1)
+            """normalized output [trans_x, trans_y, trans_z, rad_rotx, rad_roty, rad_rotz]"""
+            x = x.squeeze(1) 
             # x_ = torch.zeros(1, 6)
             # non-normalized transformation
-            correction_transform = tools.dof2mat_tensor(input_dof=x).type(torch.FloatTensor)
+
+            correction_transform = tools.dof2mat_tensor_normalized(input_dof=x).type(torch.FloatTensor)
             correction_transform = correction_transform.to(device)
 
-            volume_size = [input_vol.shape[4], input_vol.shape[3], input_vol.shape[2]]
-            # calcuate normalized transform
-            correction_transform_torch = transform_conversion_ITK_torch_to_pytorch(correction_transform, volume_size= volume_size, device=device) # normlized to STN format
+            initial_transform = initial_transform.to(device)
+            # correction_transform = tools.dof2mat_tensor_normalized(input_dof=correction).type(torch.FloatTensor)
+            # correction_transform = correction_transform.to(device)
             
+            # volume_size = [input_vol.shape[4], input_vol.shape[3], input_vol.shape[2]]
+            # # calcuate normalized transform
+            # correction_transform_torch = transform_conversion_ITK_torch_to_pytorch(correction_transform, volume_size= volume_size, device=device) # normlized to STN format
+            final_trans = correction_transform @ initial_transform
+            grid_affine = F.affine_grid(theta= final_trans[:, 0:3, :], size = input_vol.shape, align_corners=True)
+            vol_resampled = F.grid_sample(vol_original, grid_affine, align_corners=True)
+            
+            """Note: using this way cannot acheive same results as the correction @ initial_transform (guessing the affine cannot be accumulated on standard grid)"""
+            # grid_affine = F.affine_grid(theta= correction_transform[:, 0:3, :], size = input_vol.shape, align_corners=True)
+            # vol_resampled = F.grid_sample(input_vol, grid_affine, align_corners=True)
 
-            grid_affine = F.affine_grid(theta= correction_transform_torch[:, 0:3, :], size = input_vol.shape, align_corners=True)
-            
-            vol_resampled = F.grid_sample(input_vol, grid_affine, align_corners=True)
                         
             # sys.exit()
             
@@ -909,7 +918,7 @@ class DeepF2F(nn.Module):
             x = self.fc1(x)
             x = self.fc2(x)
             # print("x shape: {}".format(x.shape))
-            return x
+            return x # dof non-normalized
 
 class STN(nn.Module):
     def __init__(self, device = "cuda:0"):
@@ -930,8 +939,9 @@ class STN(nn.Module):
         else:
             # print("self.correction_transform: {}".format(self.correction_transform))
             # print("correction_transform_: {}".format(correction_transform_))
-            
-            affine_transform_combined = torch.matmul(delta_mat_accumulate_list[-1], initial_transform)
+            volume_size = [vol.shape[4], vol.shape[3], vol.shape[2]]
+            correction_transform = transform_conversion_ITK_torch_to_pytorch(delta_mat_accumulate_list[-1], volume_size, device=self.device) # normalized the theta-transfrom (pytorch)
+            affine_transform_combined = torch.matmul(correction_transform, initial_transform)
             # affine_transform_combined.to(self.device)
             grid_affine = F.affine_grid(theta= affine_transform_combined[:, 0:3, :], size = vol.shape, align_corners=True)
             vol_resampled = F.grid_sample(vol, grid_affine, align_corners=True)
@@ -963,7 +973,7 @@ class DeepRCS2V(nn.Module):
         for index, model in enumerate(self.stems):
             if index == 0:
                 vol_sampled = self.spatial_transformer(vol, initial_transform = initial_transform)
-                theta = model(img_fixed, vol_sampled[:,:,int(vol_sampled.shape[2]*0.5),:,:])
+                theta = model(img_fixed, vol_sampled[:,:,int(vol_sampled.shape[2]*0.5),:,:]) # non-normalized
                 delta_mat_accumulate = tools.dof2mat_tensor(input_dof=theta).type(torch.FloatTensor)
                 delta_mat_accumulate= delta_mat_accumulate.to(self.device)
                 delta_mat_accumulate_list.append(delta_mat_accumulate)
@@ -972,7 +982,7 @@ class DeepRCS2V(nn.Module):
                 theta = model(img_fixed, vol_sampled[:,:,int(vol_sampled.shape[2]*0.5),:,:])
                 delta_mat = tools.dof2mat_tensor(input_dof=theta).type(torch.FloatTensor)
                 delta_mat = delta_mat.to(self.device)
-                delta_mat_accumulate = torch.matmul(delta_mat, delta_mat_accumulate_list[-1])
+                delta_mat_accumulate = torch.matmul(delta_mat, delta_mat_accumulate_list[-1]) # non-normalized
                 delta_mat_accumulate_list.append(delta_mat_accumulate)
             # print("accumulate mat: {}".format(delta_mat_accumulate_list))
             

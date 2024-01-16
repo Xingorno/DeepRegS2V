@@ -72,7 +72,7 @@ parser.add_argument('-m', '--model_filename',
 parser.add_argument('-l', '--learning_rate',
                     type=float,
                     help='Learning rate',
-                    default=1e-4)
+                    default=1e-6)
 
 parser.add_argument('-d', '--device_no',
                     type=int,
@@ -88,7 +88,7 @@ parser.add_argument('-e', '--epochs',
 parser.add_argument('-b', '--batch_size',
                     type=int,
                     help='number of batch size',
-                    default=8)
+                    default=4)
 
 parser.add_argument('-n', '--network_type',
                     type=str,
@@ -115,7 +115,7 @@ batch_size = args.batch_size
 num_epochs = args.epochs
 
 project_dir = os.getcwd()
-output_dir = os.path.join(project_dir, "src/outputs_DeepS2VFF_simplified_unsupervised_1")
+output_dir = os.path.join(project_dir, "src/outputs_DeepS2VFF_simplified_2")
 isExist = os.path.exists(output_dir)
 if not isExist:
     os.makedirs(output_dir)
@@ -432,7 +432,7 @@ class LoadRegistrationTransformd(MapTransform):
             # print("tfm_RegS2v_gt_np: {}".format(tfm_RegS2V_gt_np_to))
             """get transform_pytorch"""
             tfm_RegS2V_gt_pytorch = transform_conversion_ITK_to_pytorch(tfm_RegS2V_gt_np_to, self.volume_size) # this is the affine_transform_pytorch
-            tfm_RegS2V_gt_mat_tensor = torch.from_numpy(tfm_RegS2V_gt_pytorch) 
+            tfm_RegS2V_gt_mat_tensor = torch.from_numpy(tfm_RegS2V_gt_pytorch).type(torch.FloatTensor)
 
 
             """original transform_ITK (initial one)"""
@@ -445,7 +445,7 @@ class LoadRegistrationTransformd(MapTransform):
             if addNoise:
                 """adding noise translation: N(mean = 0, std = 3), rotation: N(mean = 0, std = 3)"""
                 translation_dof_noise = np.random.normal(0, 3, (3))
-                rotation_dof_noise = np.random.normal(0, 3, (3))
+                rotation_dof_noise = np.random.normal(0, 1.5, (3))
                 transform_dof_noise = np.concatenate((translation_dof_noise, rotation_dof_noise), axis =0)
                 # print("transform_dof_noise:{}".format(transform_dof_noise))
                 transform_noise_np = tools.dof2mat_np(transform_dof_noise) # 4 by 4 matrix
@@ -461,7 +461,7 @@ class LoadRegistrationTransformd(MapTransform):
             # tfm_RegS2V_initial_np_to = T_scale@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
             """get transform_pytorch"""
             tfm_RegS2V_initial_pytorch = transform_conversion_ITK_to_pytorch(tfm_RegS2V_initial_np_to, self.volume_size) # this is the affine_transform_pytorch
-            tfm_RegS2V_initial_mat_tensor = torch.from_numpy(tfm_RegS2V_initial_pytorch)
+            tfm_RegS2V_initial_mat_tensor = torch.from_numpy(tfm_RegS2V_initial_pytorch).type(torch.FloatTensor)
             """caculate the different between the initial one and ground truth, which is for training"""
 
             # # """this is based on the transform_ITK, we decided to use the transform_pytorch to train our model, see below"""
@@ -470,20 +470,44 @@ class LoadRegistrationTransformd(MapTransform):
             # tfm_gt_diff_dof = tools.mat2dof_np(input_mat=tfm_gt_diff_mat)
             # tfm_gt_diff_dof_tensor = torch.from_numpy(tfm_gt_diff_dof[:6])
             # # tfm_RegS2V_initial_mat_tensor = torch.from_numpy(tfm_RegS2V_initial_np_to)
+            """Note: converting to ITK transform needs to be inversed"""
+            tfm_gt_diff_mat_normalized = tfm_RegS2V_gt_pytorch@np.linalg.inv(tfm_RegS2V_initial_pytorch) # 
+            # tfm_gt_diff_mat_normalized = np.linalg.inv(tfm_RegS2V_initial_pytorch) @ tfm_RegS2V_gt_pytorch# need to be inversed for normalized transform
+            tfm_gt_diff_mat_tensor_normalized = torch.from_numpy(tfm_gt_diff_mat_normalized).type(torch.FloatTensor)
+            tfm_gt_diff_dof_rad_normalized = tools.mat2dof_tensor(tfm_gt_diff_mat_tensor_normalized, degree = 'rad')
+            # dof_deg = tools.mat2dof_tensor(tfm_gt_diff_mat_tensor_normalized, degree = 'deg')
+            
+            # matrix = tools.dof2mat_tensor_normalized(dof_rad)
+            #################test########################
+            # print("mat_tensor: ", tfm_gt_diff_mat_tensor_normalized)
+            # print("mat_tensor * ini: ", tfm_gt_diff_mat_tensor_normalized @ tfm_RegS2V_initial_mat_tensor)
+            # print("gt_tensor: ", tfm_RegS2V_gt_mat_tensor)
 
-            # tfm_gt_diff_mat = tfm_RegS2V_gt_pytorch@np.linalg.inv(tfm_RegS2V_initial_pytorch)
+           
+
+            # tfm_gt_diff_mat = tfm_RegS2V_gt_np_to @ np.linalg.inv(tfm_RegS2V_initial_np_to) 
             # tfm_gt_diff_mat_tensor = torch.from_numpy(tfm_gt_diff_mat)
-            tfm_gt_diff_mat = np.linalg.inv(tfm_RegS2V_initial_np_to) @ tfm_RegS2V_gt_np_to
-            tfm_gt_diff_mat_tensor = torch.from_numpy(tfm_gt_diff_mat)
+            # # print("diff_gt_mat (1): {}".format(tfm_gt_diff_mat_tensor))
 
-            # print("tfm_gt_diff_mat:{}".format(tfm_gt_diff_mat))
-            tfm_gt_diff_dof = tools.mat2dof_np(input_mat=tfm_gt_diff_mat)
-            tfm_gt_diff_dof_tensor = torch.from_numpy(tfm_gt_diff_dof[:6])
-            # print("tfm_gt_diff_dof_tensor:{}".format(tfm_gt_diff_dof_tensor))
-            # print("tfm_RegS2V_gt_pytorch:{}".format(tfm_RegS2V_gt_pytorch))
+            # # vol_size = [200, 160, 120]
+            # correction_transform_ITK_LPS = transform_conversion_pytorch_to_tfm_ITK_LPS(tfm_gt_diff_mat_tensor_normalized, self.volume_size)
+            # dof_est_unnormalized = tools.mat2dof_tensor(correction_transform_ITK_LPS, degree = 'rad')
 
-            data["tfm_gt_diff_mat"] = tfm_gt_diff_mat_tensor # difference non-normlized by affine_grid
-            data["tfm_gt_diff_dof"] = tfm_gt_diff_dof_tensor # difference non-normlized by affine_grid
+            # print("dof_est_unnormalized(1): {}".format(dof_est_unnormalized))
+            # print("dof_est_unnormalized(2): {}".format(tools.mat2dof_tensor(tfm_gt_diff_mat_tensor, degree = 'rad')))
+
+            # # print("tfm_gt_diff_mat:{}".format(tfm_gt_diff_mat))
+            # tfm_gt_diff_dof_normalized = tools.mat2dof_np(input_mat=tfm_gt_diff_mat_normalized)
+            # tfm_gt_diff_dof_tensor_normalized = torch.from_numpy(tfm_gt_diff_dof_normalized[:6])
+            # print("tfm_gt_diff_dof_tensor_normalized: ", tfm_gt_diff_dof_tensor_normalized)
+
+
+            # print("dof_est_unnormalized:{}".format(dof_est_unnormalized))
+            # print("tfm_gt_diff_dof_tensor_normalized:{}".format(tfm_gt_diff_dof_tensor_normalized))
+            # print("diff_gt_mat(2): {}".format(correction_transform_ITK_LPS))
+
+            data["tfm_gt_diff_mat"] = tfm_gt_diff_mat_tensor_normalized # difference normlized by affine_grid
+            data["tfm_gt_diff_dof"] = tfm_gt_diff_dof_rad_normalized # difference normlized by affine_grid
             data["tfm_RegS2V_initial_mat"] = tfm_RegS2V_initial_mat_tensor # difference normlized by affine_grid
             data["tfm_RegS2V_gt_mat"] = tfm_RegS2V_gt_mat_tensor # difference normlized by affine_grid
 
@@ -518,6 +542,14 @@ def transform_conversion_pytorch_to_original_ITK(affine_transform_pytorch_initia
     affine_transform_original_ITK = T_translate_inv@T_scale_inv@affine_transform_ITK@T_scale
 
     return affine_transform_original_ITK
+
+def transform_conversion_dof_normalized_to_ITK(dof_normalized, vol_size, device):
+    mat_normalized = tools.dof2mat_tensor_normalized(dof_normalized)
+    mat_normalized = mat_normalized.to(device)
+    transform_ITK_LPS = transform_conversion_pytorch_to_tfm_ITK_LPS(mat_normalized, vol_size, device=device)
+    dof_ITK = tools.mat2dof_tensor(transform_ITK_LPS, degree = 'deg')
+    dof_ITK = dof_ITK.to(device)
+    return dof_ITK
 
 def transform_conversion_ITK_to_pytorch(affine_transform_ITK, volume_size):
     # note: affine_transform_ITK (to parent)
@@ -573,6 +605,15 @@ def transform_conversion_ITK_torch_to_pytorch(affine_transform_ITK_torch, volume
     # affine_transform_pytorch = T_normalized @ affine_transform_inverse @ np.linalg.inv(T_normalized)
     affine_transform_pytorch = T_normalized @ affine_transform_inverse @ torch.linalg.inv(T_normalized)
     return affine_transform_pytorch # 4 by 4
+
+def transform_conversion_pytorch_to_tfm_ITK_LPS(tranform_normalized, volume_size, device = "cpu"):
+    
+    T_normalized = torch.tensor([[2/volume_size[0], 0.0, 0.0, 0.0], [0.0, 2/volume_size[1], 0.0, 0.0], [0.0, 0.0, 2/volume_size[2], 0.0], [0.0, 0.0, 0.0, 1.0]]).type(torch.FloatTensor)
+    T_normalized = T_normalized.to(device)
+    affine_transform_inverse = torch.linalg.inv(T_normalized) @ tranform_normalized @ T_normalized
+    
+    affine_transform_ITK_LPS = torch.linalg.inv(affine_transform_inverse)
+    return affine_transform_ITK_LPS
 
 def transform_conversion_ITK_to_scipy(affine_transform_ITK, volume_size):
     #note: affine_transform_ITK (to parent)
@@ -936,11 +977,11 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
         lr = args.learning_rate
         # print('Learning rate = {}'.format(lr))
 
-    # optimizer = optim.Adam(model.parameters(), lr=lr)
-    # scheduler = lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.8)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=80, gamma=0.8)
 
-    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
-    scheduler = lr_scheduler.CyclicLR(optimizer, base_lr=1e-6, max_lr=1e-4,step_size_up=200)
+    # optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+    # scheduler = lr_scheduler.CyclicLR(optimizer, base_lr=1e-6, max_lr=1e-4,step_size_up=200)
     # scheduler = lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=20)
     # now_str = '150nonorm'
     
@@ -980,14 +1021,14 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         # print("volume_id: ", volume_id)
                         vol_tensor[i, :, :, :, :] = torch.permute(training_dataset_volume[volume_id]['volume_name'].type(torch.FloatTensor), (0, 3, 2, 1))   
                     frame_tensor = torch.permute(batch["frame_name"].type(torch.FloatTensor), (0, 1, 4, 3, 2))
-                    # mat_tensor = batch["tfm_gt_diff_mat"].type(torch.FloatTensor)
+                    mat_tensor = batch["tfm_gt_diff_mat"].type(torch.FloatTensor)
                     dof_tensor = batch["tfm_gt_diff_dof"].type(torch.FloatTensor)
-                    
+                    dof_tensor = dof_tensor.squeeze(1)
                     # print('vol_tensor {}'.format(vol_tensor.shape))
                     # print('frame_tensor {}'.format(frame_tensor.shape))
                     # print('mat_tensor {}'.format(mat_tensor.shape))
                     # print('dof_tensor {}'.format(dof_tensor))
-                    
+                    # print('dof_tensor shape {}'.format(dof_tensor.shape))
                     # sys.exit()
 
                     vol_tensor = vol_tensor.to(device)
@@ -1006,7 +1047,7 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         else:
                             frame_tensor_gt[i, :, :, :,:] = frame_tensor[i,:, :, :, :]
                     frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
-
+                    frame_tensor_gt_4d = frame_tensor_gt.squeeze(2)
                     # print("frame_tensor_gt",frame_tensor_gt.shape)
                     # forward
                     # track history if only in train
@@ -1019,9 +1060,27 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
 
                         grid_affine = F.affine_grid(theta= affine_transform_initial[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
                         vol_initialized = F.grid_sample(vol_tensor, grid_affine, align_corners=True)
-                        # vol_initialized = vol_initialized.to(device)
+                        vol_initialized = vol_initialized.to(device)
 
-                        # """visualize the initialized images"""
+                        # sys.exit()
+                        vol_resampled, dof_estimated = model(vol=vol_initialized, frame=frame_tensor_gt, initial_transform = affine_transform_initial, vol_original=vol_tensor, device=device) # shape batch_size*6
+                        
+                        # print("dof_estimated: ", dof_estimated)
+                        # print("dof_tensor: ", dof_tensor)
+                        """rotation loss (deg)"""
+                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
+                        # rotation_loss = -100
+                        """translation loss (mm)"""
+                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
+                        # translation_loss = -100
+                        """image intensity-based loss (localNCC)"""
+                        frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
+                        
+                        # frame_est_np = torch.Tensor.numpy(vol_resampled[:,:, int(volume_size[3]*0.5), :, :].detach().cpu())
+                        # frame_tensor_gt_4d =frame_tensor_gt_4d.detach().cpu()
+                        # print("frame_estimated shape: ", frame_estimated.shape)
+                        
+                        """visualize the initialized images"""
                         # sampled_frame_est = vol_initialized[:,:, int(volume_size[3]*0.5), :, :]
                         # sampled_frame_est_np = torch.Tensor.numpy(sampled_frame_est.detach().cpu())
 
@@ -1031,36 +1090,69 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         # sampled_frame_gt = vol_gt[:,:, int(volume_size[3]*0.5), :, :]
                         # sampled_frame_gt_np = torch.Tensor.numpy(sampled_frame_gt.detach().cpu())
 
-                        frame_tensor_gt_4d = frame_tensor_gt.squeeze(2)
+                        
                         # frame_gt_np = torch.Tensor.numpy(frame_tensor_gt_4d.detach().cpu())
+
                         # print("frame_gt_np",frame_gt_np.size)
                         # fig = plt.figure(figsize=(16, 9))
-                        # ax1 = fig.add_subplot(131)
-                        # ax2 = fig.add_subplot(132)
-                        # ax3 = fig.add_subplot(133)
+                        # ax1 = fig.add_subplot(141)
+                        # ax2 = fig.add_subplot(142)
+                        # ax3 = fig.add_subplot(143)
+                        # ax4 = fig.add_subplot(144)
                         # ax1.imshow(frame_gt_np[0, 0, :, :], cmap = "gray")
                         # ax1.set_title("US frame (target)")
                         # ax2.imshow(sampled_frame_est_np[0, 0, :, :], cmap = "gray")
                         # ax2.set_title("Resampled image (initial)")
                         # ax3.imshow(sampled_frame_gt_np[0, 0, :, :], cmap = "gray")
                         # ax3.set_title("Resampled image (gt)")
+                        # ax4.imshow(frame_est_np[0, 0, :, :], cmap = "gray")
+                        # ax4.set_title("estimated image (gt)")
                         # plt.show()
 
-                        # sys.exit()
+                        # fig = plt.figure(figsize=(16, 9))
+                        # ax1 = fig.add_subplot(141)
+                        # ax2 = fig.add_subplot(142)
+                        # ax3 = fig.add_subplot(143)
+                        # ax4 = fig.add_subplot(144)
+                        # ax1.imshow(frame_gt_np[1, 0, :, :], cmap = "gray")
+                        # ax1.set_title("US frame (target)")
+                        # ax2.imshow(sampled_frame_est_np[1, 0, :, :], cmap = "gray")
+                        # ax2.set_title("Resampled image (initial)")
+                        # ax3.imshow(sampled_frame_gt_np[1, 0, :, :], cmap = "gray")
+                        # ax3.set_title("Resampled image (gt)")
+                        # ax4.imshow(frame_est_np[1, 0, :, :], cmap = "gray")
+                        # ax4.set_title("estimated image (gt)")
+                        # plt.show()
 
-                        vol_resampled, dof_estimated = model(vol=vol_initialized, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
-                                               
-                        """rotation loss (deg)"""
-                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
-                        """translation loss (mm)"""
-                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
+                        # fig = plt.figure(figsize=(16, 9))
+                        # ax1 = fig.add_subplot(141)
+                        # ax2 = fig.add_subplot(142)
+                        # ax3 = fig.add_subplot(143)
+                        # ax4 = fig.add_subplot(144)
+                        # ax1.imshow(frame_gt_np[2, 0, :, :], cmap = "gray")
+                        # ax1.set_title("US frame (target)")
+                        # ax2.imshow(sampled_frame_est_np[2, 0, :, :], cmap = "gray")
+                        # ax2.set_title("Resampled image (initial)")
+                        # ax3.imshow(sampled_frame_gt_np[2, 0, :, :], cmap = "gray")
+                        # ax3.set_title("Resampled image (gt)")
+                        # ax4.imshow(frame_est_np[2, 0, :, :], cmap = "gray")
+                        # ax4.set_title("estimated image (gt)")
+                        # plt.show()
 
-                        """image intensity-based loss (localNCC)"""
-                        frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
-                        # frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].detach().cpu()
-                        # frame_tensor_gt_4d =frame_tensor_gt_4d.detach().cpu()
-                        # print("frame_estimated shape: ", frame_estimated.shape)
-                        
+                        # fig = plt.figure(figsize=(16, 9))
+                        # ax1 = fig.add_subplot(141)
+                        # ax2 = fig.add_subplot(142)
+                        # ax3 = fig.add_subplot(143)
+                        # ax4 = fig.add_subplot(144)
+                        # ax1.imshow(frame_gt_np[3, 0, :, :], cmap = "gray")
+                        # ax1.set_title("US frame (target)")
+                        # ax2.imshow(sampled_frame_est_np[3, 0, :, :], cmap = "gray")
+                        # ax2.set_title("Resampled image (initial)")
+                        # ax3.imshow(sampled_frame_gt_np[3, 0, :, :], cmap = "gray")
+                        # ax3.set_title("Resampled image (gt)")
+                        # ax4.imshow(frame_est_np[3, 0, :, :], cmap = "gray")
+                        # ax4.set_title("estimated image (gt)")
+                        # plt.show()
 
 
                         # """visualize image (tested)"""
@@ -1083,11 +1175,11 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         # print("image_localNCC_loss device: ", image_localNCC_loss.device)
                         # coefficients for loss functinos
                         
-                        alpha = 1.0
-                        beta = 1.0
-                        gamma = 20.0
+                        alpha = 100.0
+                        beta = 100.0
+                        gamma = 1.0
                         loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
-
+                        # image_localNCC_loss = 0
                         # loss_combined = image_localNCC_loss
                         # loss_combined = rotation_loss + translation_loss
                         # loss_combined = alpha*rotation_loss + beta*translation_loss
@@ -1110,7 +1202,10 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     torch.cuda.empty_cache()
                     cur_lr = float(scheduler.get_last_lr()[0])
                     # print(scheduler.get_last_lr())
-                    print('{}/{}: Train-BATCH (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.6f}(loss_translation), {:.4f}(loss_rotation)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, translation_loss, rotation_loss))
+                    print('{}/{}: Train (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(loss_NCC), {:.6f}(loss_trans), {:.4f}(loss_rot)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, translation_loss, rotation_loss))
+                    print("(dof-est){}".format(torch.Tensor.numpy(dof_estimated[1,:].detach().cpu())))
+                    print("(dof-gt) {}".format(torch.Tensor.numpy(dof_tensor[1,:].detach().cpu())))
+                    print("=========================================================================================================================================")
                 # sys.exit()
                 scheduler.step()
                 # sys.exit()
@@ -1137,7 +1232,7 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     frame_tensor = torch.permute(batch["frame_name"].type(torch.FloatTensor), (0, 1, 4, 3, 2))
                     # mat_tensor = batch["tfm_gt_diff_mat"].type(torch.FloatTensor)
                     dof_tensor = batch["tfm_gt_diff_dof"].type(torch.FloatTensor)
-                    
+                    dof_tensor = dof_tensor.squeeze(1)
 
                     vol_tensor = vol_tensor.to(device)
                     frame_tensor = frame_tensor.to(device)
@@ -1162,7 +1257,7 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         grid_affine = F.affine_grid(theta= affine_transform_initial[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
                         vol_initialized = F.grid_sample(vol_tensor, grid_affine, align_corners=True)
                         # vol_initialized = vol_initialized.to(device)
-                        vol_resampled, dof_estimated = model(vol=vol_initialized, frame=frame_tensor_gt, initial_transform = batch['tfm_RegS2V_initial_mat'] ,device=device) # shape batch_size*6
+                        vol_resampled, dof_estimated = model(vol=vol_initialized, frame=frame_tensor_gt, initial_transform = affine_transform_initial, vol_original = vol_tensor ,device=device) # shape batch_size*6
                         
                         # """save the vol_resampled""" 
                         # vol_resampled_= torch.permute(vol_resampled.data, (0, 1, 4, 3, 2))
@@ -1174,12 +1269,19 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         # output_filename = r"E:\PROGRAM\Project_PhD\Registration\Deepcode\test\Pre-Ablation_01_test.mha"
                         # writer.write(output_filename)
 
+                        vol_size = [vol_initialized.shape[4], vol_initialized.shape[3], vol_initialized.shape[2]]
+                        dof_estimated_ITK = transform_conversion_dof_normalized_to_ITK(dof_normalized=dof_estimated, vol_size = vol_size, device=device)
+                        dof_gt_ITK = transform_conversion_dof_normalized_to_ITK(dof_normalized=dof_tensor, vol_size = vol_size, device=device)
+                        # print("dof_estimated_ITK: ", dof_estimated_ITK)
+                        # print("dof_gt_ITK: ", dof_gt_ITK)
                         # sys.exit()
 
                         """rotation loss (deg)"""
                         rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
+                        rotation_loss_ITK = loss_mse(dof_estimated_ITK[:, 3:], dof_gt_ITK[:, 3:])
                         """translation loss (mm)"""
                         translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
+                        translation_loss_ITK = loss_mse(dof_estimated_ITK[:, :3], dof_gt_ITK[:, :3])
 
                         """image intensity-based loss (localNCC)"""
                         frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
@@ -1212,11 +1314,11 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         image_localNCC_loss, ROI = loss_localNCC(frame_estimated, frame_tensor_gt_4d)
                         
                         # coefficients for loss functinos
-                        # alpha = 1.0
-                        # beta = 1.0
-                        # gamma = 5.0
-                        # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
-                        loss_combined = image_localNCC_loss
+                        alpha = 100.0
+                        beta = 100.0
+                        gamma = 1.0
+                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        # loss_combined = image_localNCC_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
                         # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
                         # print("loss_combined device (guess cuda): ", loss_combined.device)
@@ -1230,8 +1332,11 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     running_dof += (rotation_loss + translation_loss)*actual_batch_size  
                     nth_batch += 1
                     
-                    print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.6f}(loss_translation),  {:.4f}(loss_rotation)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, translation_loss, rotation_loss))
-                
+                    # print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.6f}(loss_translation),  {:.4f}(loss_rotation)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, translation_loss, rotation_loss))
+                    print('{}/{}: Train (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(loss_NCC), {:.6f}(norm){:.6f}(non-norm)(loss_trans), {:.5f}(norm){:.5f}(non-norm)(loss_rot)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, translation_loss, translation_loss_ITK, rotation_loss, rotation_loss_ITK))
+                    print("(dof-est_ITK){}".format(torch.Tensor.numpy(dof_estimated_ITK[1,:].detach().cpu())))
+                    print("(dof-gt_ITK) {}".format(torch.Tensor.numpy(dof_gt_ITK[1,:].detach().cpu())))
+                    print("=========================================================================================================================================")
                 # sys.exit()
                 epoch_loss = running_loss / num_cases[phase]
                 epoch_running_localNCC = running_localNCC/num_cases[phase]
@@ -1245,7 +1350,7 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     best_ep = epoch
                     print('**** best model updated with loss={:.4f} ****'.format(lowest_loss))
                 if epoch%10 == 0 and epoch != 0:
-                    fn_save = path.join(output_dir, '{}_{}_weak_super.pth'.format(trained_model_list[str(TRAINED_MODEL)], epoch))
+                    fn_save = path.join(output_dir, '{}_{}_super_lr6.pth'.format(trained_model_list[str(TRAINED_MODEL)], epoch))
                     torch.save(model.state_dict(), fn_save)
                 
                 torch.cuda.empty_cache()    
@@ -1272,8 +1377,13 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
     loss_mse = nn.MSELoss()
     # loss_localNCC = LocalNormalizedCrossCorrelationLoss(spatial_dims=2, kernel_size= 13, kernel_type="rectangular", reduction="mean")
     # loss_localNCC = loss_F.LocalNCC(device = device, kernel_size =(71, 71), stride=(1, 1), padding="valid", win_eps= 100)
-    kernel_size = 91
+    # setting 1: larger image size [400, 320, 240]
+    # kernel_size = 91
+
+    # setting 2: volume size [200, 160, 120]
+    kernel_size = 51
     loss_localNCC = loss_F.LocalNCC_new(device = device, kernel_size =(kernel_size, kernel_size), stride=(2, 2), padding="valid", win_eps= 0.98)
+
     if args.training_mode == 'finetune':
         # overwrite the learning rate for finetune
         lr = 5e-6
@@ -1370,7 +1480,7 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
                         # print('delta_mat_accumulate_list: {}'.format(delta_mat_accumulate_list))
                         # print('delta_mat_accumulate_list[-1]: {}'.format(delta_mat_accumulate_list[-1]))
                         # sys.exit()
-                        dof_estimated = tools.mat2dof_tensor(delta_mat_accumulate_list[-1])
+                        dof_estimated = tools.mat2dof_tensor(delta_mat_accumulate_list[-1]) # non-normalized
                         dof_estimated = dof_estimated.to(device)
                         """rotation loss (deg)"""
                         rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
@@ -1423,7 +1533,7 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
                         
                         alpha = 1.0
                         beta = 1.0
-                        gamma = 5.0
+                        gamma = 20.0
                         loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
                         # loss_combined = image_localNCC_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
@@ -1823,7 +1933,7 @@ if __name__ == '__main__':
         if TRAINED_MODEL == 4:
             model = RegS2Vnet.RegS2Vnet_featurefusion_simplified().to(device=device)
             if RESUME_MODEL:
-                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_unsupervised/", 'DeepS2VFF_simplified_250_dof_supervised.pth') # 
+                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_unsupervised_1/", 'DeepS2VFF_simplified_490_weak_super.pth') # 
                 model.load_state_dict(torch.load(pretrained_model, map_location=device))
                 print("RESUME model: {}".format(pretrained_model))
             tv_hist = train_model_initialized(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)

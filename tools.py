@@ -566,18 +566,74 @@ def dof2mat_tensor(input_dof):
     # sys.exit()
     return M
 
-def mat2dof_tensor(input_mat):
+def dof2mat_tensor_normalized(input_dof):
+    """rotation order: matrix = rotx(ai) * roty(aj) * rotz(ak)"""
+    """translation: normalized by volume_size"""
+    """rotation dof: rad """
+    # print("input_dof is leaf_variable (guess false): ", input_dof.is_leaf)
+    # print("input_dof is required_grad (guess True): ", input_dof.requires_grad)
+
+    # rad = tgm.deg2rad(input_dof[:, 3:])
+    rad = input_dof[:, 3:]
+    ai = rad[:, 0]
+    aj = rad[:, 1]
+    ak = rad[:, 2]
+
+    si, sj, sk = torch.sin(ai), torch.sin(aj), torch.sin(ak)
+    ci, cj, ck = torch.cos(ai), torch.cos(aj), torch.cos(ak)
+
+    M = torch.zeros((input_dof.shape[0], 4, 4))
+    
+    M[:, 0, 0] = cj*ck
+    M[:, 0, 1] = -cj*sk
+    M[:, 0, 2] = sj
+    M[:, 1, 0] = si*sj*ck + ci*sk
+    M[:, 1, 1] = -si*sj*sk + ci*ck
+    M[:, 1, 2] = -si*cj
+    M[:, 2, 0] = -ci*sj*ck + si*sk
+    M[:, 2, 1] = ci*sj*sk + si*ck
+    M[:, 2, 2] = ci*cj
+    M[:, 3, 3] = 1
+    M[:, :3, 3] = input_dof[:, :3]
+
+    
+    
+    # print("M is leaf_variable (guess false): ", M.is_leaf)
+    # print("M is required_grad (guess True): ", M.requires_grad)
+
+    # print('out_mat {}\n{}'.format(M.shape, M))
+    # sys.exit()
+    return M
+
+
+
+def mat2dof_tensor(input_mat, degree = 'deg'):
     transform_input_np = torch.Tensor.numpy(input_mat.detach().cpu())
     transform_shape = transform_input_np.shape
+    # print("transform_shape: ", transform_shape)
     if len(transform_shape) == 3:
         input_dof_np = np.zeros((transform_shape[0], 6))
         for i in range(0, transform_shape[0]):
             input_dof_np[i,:] = mat2dof_np(transform_input_np[i])[0:6]
         input_dof_tensor = torch.from_numpy(input_dof_np)
+        if degree == 'deg':
+            input_dof_tensor
+        if degree == 'rad':
+            input_dof_tensor[:, 3:] = input_dof_tensor[:, 3:] * (math.pi) / 180.0
+        return input_dof_tensor
+    
+    elif len(transform_shape) == 2:
+        input_dof_np = np.zeros((1, 6))
+        input_dof_np[0,:] = mat2dof_np(transform_input_np)[0:6]
+        input_dof_tensor = torch.from_numpy(input_dof_np)
+        if degree == 'deg':
+            input_dof_tensor
+        if degree == 'rad':
+            input_dof_tensor[:, 3:] = input_dof_tensor[:, 3:] * (math.pi) / 180.0
         return input_dof_tensor
     else:
-        print("input erro about transformation matrix")
-        return
+         print("input error about wrong transformation dimensionality")
+
 
 def dof2mat_tensor_backup(input_dof, device):
     """Note: the order of rigid transformation (first: translation, secondly: rotation)"""
