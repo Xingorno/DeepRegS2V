@@ -110,20 +110,23 @@ num_epochs = args.epochs
 
 project_dir = os.getcwd()
 # output_dir = os.path.join(project_dir, "src/outputs_evaluation_FVNet")
-output_dir = os.path.join(project_dir, "src/outputs_evaluation_DeepS2VFF")
+output_dir = os.path.join(project_dir, "src/outputs_evaluation_temp")
 isExist = os.path.exists(output_dir)
 if not isExist:
     os.makedirs(output_dir)
-DEEP_MODEL = True
-# NONDEEP_MODEL = False
-TRAINED_MODEL = 2
-trained_model_list = {'1': 'FVnet-supervised', '2': 'DeepS2VFF-weakly supervised'}
+DEEP_MODEL = False
+NONDEEP_MODEL = True
+TRAINED_MODEL = 5
+trained_model_list = {'1': 'FVnet-supervised', '2': 'DeepS2VFF', '3':'DeepRCS2V', '4':"DeepS2VFF_simplified", '5':"DeepS2VFF_simplified_nodrop" }
 net = 'testing'
 
+addNoise =True
 print('Start device {}'.format(device))
 print("Network type: {}".format(net))
 print("Output directory: {}".format(output_dir))
+print("Output directory: {}".format(output_dir))
 print("TRAINED_MODEL : {}".format(trained_model_list[str(TRAINED_MODEL)]))
+print("adding noise to data: {}".format(addNoise))
 # print('Target training epoches: {}'.format(num_epochs))
 # print("Training batch size: {}".format(batch_size))
 # print("Learning rate: {}".format(args.learning_rate))
@@ -178,8 +181,22 @@ def update_info(best_epoch, current_epoch, lowest_val_TRE, tv_hist, testing=Fals
         file.write('Best_epoch: {}/{}, Val_loss: {:.4f}, loss_combined_train: {:.4f}, loss_image_train: {:.4f}, loss_dof_train: {:.4f}, loss_combined_val: {:.4f}, loss_image_val: {:.4f}, loss_dof_val: {:.4f}\n'.format(best_epoch, current_epoch, lowest_val_TRE, loss_combined_train, loss_image_train, loss_dof_train, loss_combined_val, loss_image_val, loss_dof_val))
         file.close()
     print('Info updated in {}!'.format(now_str))
+def transform_conversion_dof_normalized_to_ITK(dof_normalized, vol_size, device):
+    mat_normalized = tools.dof2mat_tensor_normalized(dof_normalized)
+    mat_normalized = mat_normalized.to(device)
+    transform_ITK_LPS = transform_conversion_pytorch_to_tfm_ITK_LPS(mat_normalized, vol_size, device=device)
+    dof_ITK = tools.mat2dof_tensor(transform_ITK_LPS, degree = 'deg')
+    dof_ITK = dof_ITK.to(device)
+    return dof_ITK
 
+def transform_conversion_pytorch_to_tfm_ITK_LPS(tranform_normalized, volume_size, device = "cpu"):
     
+    T_normalized = torch.tensor([[2/volume_size[0], 0.0, 0.0, 0.0], [0.0, 2/volume_size[1], 0.0, 0.0], [0.0, 0.0, 2/volume_size[2], 0.0], [0.0, 0.0, 0.0, 1.0]]).type(torch.FloatTensor)
+    T_normalized = T_normalized.to(device)
+    affine_transform_inverse = torch.linalg.inv(T_normalized) @ tranform_normalized @ T_normalized
+    
+    affine_transform_ITK_LPS = torch.linalg.inv(affine_transform_inverse)
+    return affine_transform_ITK_LPS
 
 def ConvertITKTransform2NumpyArray(transform):
     """ITK transfrom: transform_from_parent_LPS."""
@@ -201,6 +218,182 @@ def ConvertNumpyArray2ITKTransform(transform_array):
     transform.SetMatrix(rotation)
     transform.SetTranslation(translation)
     return transform
+
+def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_flag = True, augmented = True):
+
+    project_src_dir = os.path.join(project_dir, "src")
+    project_data_dir = os.path.join(project_dir, "data")
+    
+    if phase == 'train':
+        if augmented:
+            dataset_dict_fileNAME = os.path.join(project_src_dir, "training_dataset_dict_aug.xml")
+            volume_dict_fileNAME = os.path.join(project_src_dir, "training_volume_dict_aug.xml")
+        else:
+            dataset_dict_fileNAME = os.path.join(project_src_dir, "training_dataset_dict.xml")
+            volume_dict_fileNAME = os.path.join(project_src_dir, "training_volume_dict.xml")
+    elif phase == 'val':
+        dataset_dict_fileNAME = os.path.join(project_src_dir, "validation_dataset_dict.xml")
+        volume_dict_fileNAME = os.path.join(project_src_dir, "validation_volume_dict.xml")
+    elif phase == 'test':
+        dataset_dict_fileNAME = os.path.join(project_src_dir, "test_dataset_dict.xml")
+        volume_dict_fileNAME = os.path.join(project_src_dir, "test_volume_dict.xml")
+    else:
+        dataset_dict_fileNAME = os.path.join(project_src_dir, phase + "_dataset_dict.xml")
+        volume_dict_fileNAME = os.path.join(project_src_dir, phase + "_volume_dict.xml")
+    
+    if platform.system() == "Linux":
+        dataset_dict_fileNAME = '/'.join(dataset_dict_fileNAME.split('\\'))
+        volume_dict_fileNAME = '/'.join(volume_dict_fileNAME.split('\\'))
+
+    num_of_cases = len(cases_metadata) # number of volumes
+    alldataset_LUT = []
+    volume_LUT = []
+    for case_index in range(0, num_of_cases):
+        
+
+        path = os.path.join(project_data_dir, cases_metadata[case_index].text)
+        if platform.system() == 'Linux':
+            path = '/'.join(path.split('\\'))
+        case_tree = ET.parse(path)
+        case_root = case_tree.getroot()
+
+        # get the volume name (moving image)
+        moving_image_metadata = case_root.find('moving_image')
+        moving_image_fileNAME = os.path.join(project_data_dir, moving_image_metadata.find('directory').text, moving_image_metadata.find('name_raw_US_volume').text)
+        if platform.system() == 'Linux':
+            moving_image_fileNAME = '/'.join(moving_image_fileNAME.split('\\'))
+        
+
+        # get the mask of volume (moving image)
+        moving_image_mask_metadata = case_root.find('moving_image_mask')
+        moving_image_mask_fileNAME = os.path.join(project_data_dir, moving_image_mask_metadata.find('directory').text, moving_image_mask_metadata.find('name_rawdata').text)
+        if platform.system() == 'Linux':
+            moving_image_mask_fileNAME = '/'.join(moving_image_mask_fileNAME.split('\\'))
+        
+
+        # get the fixed image
+        fixed_images_metadata = case_root.find('fixed_image')
+        rangeMin = int(fixed_images_metadata.find('rangeMin').text)
+        rangeMax = int(fixed_images_metadata.find('rangeMax').text)
+
+        # get the mask of fixed image
+        fixed_image_mask_metadata = case_root.find('fixed_image_mask')
+        fixed_image_mask_fileNAME = os.path.join(project_data_dir, fixed_image_mask_metadata.find('directory').text, fixed_image_mask_metadata.find('name').text)
+        if platform.system() == 'Linux':
+            fixed_image_mask_fileNAME = '/'.join(fixed_image_mask_fileNAME.split('\\'))
+        
+
+        volume_case_dict = {'volume_ID': case_index,'volume_name': moving_image_fileNAME, "volume_mask_name": moving_image_mask_fileNAME}
+        volume_LUT.append(volume_case_dict)
+        # get the transform (3DUS to CT/MRI)
+        tfm_3DUS_CT_metadata = case_root.find('transform_3DUS_CT')
+        tfm_3DUS_CT_fileNAME = os.path.join(project_data_dir, tfm_3DUS_CT_metadata.find('directory').text, tfm_3DUS_CT_metadata.find('name').text)
+        if platform.system() == 'Linux':
+            tfm_3DUS_CT_fileNAME = '/'.join(tfm_3DUS_CT_fileNAME.split('\\'))
+
+        
+        # get the frame flip flag
+        US_image_setting_metadata = case_root.find('US_image_setting')
+        frame_flip_flag = US_image_setting_metadata.find("flip").text
+
+        # get the transform metadata (slice to volume registration)
+        tfm_RegS2V_metadata = case_root.find('slice_to_volume_registration')
+        if augmented:
+            step = 2
+        else:
+            step = 1
+        for frame_index in range(rangeMin, rangeMax + 1, step): # add step
+            num_letters_frame_index = len(str(frame_index))
+            if num_letters_frame_index == 1:
+                full_frame_index = '000' + str(frame_index)       
+            elif num_letters_frame_index == 2:
+                full_frame_index = '00' + str(frame_index)      
+            elif num_letters_frame_index == 3:
+                full_frame_index = '0' + str(frame_index)
+            elif num_letters_frame_index == 4:
+                full_frame_index = str(frame_index)
+            else :
+                print("checking out the maximum length of the filename!")
+            
+            # get the fixed image filename
+            fixed_image_filename = "Image_" + full_frame_index + ".mha"
+            fixed_image_fileNAME = os.path.join(project_data_dir, fixed_images_metadata.find('directory').text, fixed_image_filename) 
+            if platform.system() == 'Linux':
+                fixed_image_fileNAME = '/'.join(fixed_image_fileNAME.split('\\'))
+
+            initial_frame_name = "initial_"+ full_frame_index + ".tfm"
+            correction_frame_name = "correction_" + full_frame_index+ ".tfm"
+            tfm_RegS2V_initial_fileNAME = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('initial_folder').text, initial_frame_name)
+            tfm_RegS2V_correction_fileNAME = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('correction_folder').text, correction_frame_name)
+            if platform.system() == 'Linux':
+                tfm_RegS2V_initial_fileNAME = '/'.join(tfm_RegS2V_initial_fileNAME.split('\\'))
+                tfm_RegS2V_correction_fileNAME = '/'.join(tfm_RegS2V_correction_fileNAME.split('\\'))
+
+            if frame_index == rangeMin:
+                # fixed_image_fileNAME_pre = fixed_image_fileNAME
+                tfm_RegS2V_correction_fileNAME_pre = tfm_RegS2V_correction_fileNAME
+            else:
+                num_letters_frame_index_pre = len(str(frame_index-1))
+                if num_letters_frame_index_pre == 1:
+                    full_frame_index_pre = '000' + str(frame_index-1)       
+                elif num_letters_frame_index_pre == 2:
+                    full_frame_index_pre = '00' + str(frame_index-1)      
+                elif num_letters_frame_index_pre == 3:
+                    full_frame_index_pre = '0' + str(frame_index-1)
+                elif num_letters_frame_index_pre == 4:
+                    full_frame_index_pre = str(frame_index-1)
+                else :
+                    print("checking out the maximum length of the filename!")
+                # fixed_image_filename_pre = "Image_" + full_frame_index_pre + ".mha"
+                # fixed_image_fileNAME_pre = os.path.join(fixed_images_metadata.find('directory').text, fixed_image_filename_pre)
+
+                correction_frame_name = "correction_" + full_frame_index_pre+ ".tfm"
+                tfm_RegS2V_correction_fileNAME_pre = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('correction_folder').text, correction_frame_name)
+                if platform.system() == 'Linux':
+                    tfm_RegS2V_correction_fileNAME_pre = '/'.join(tfm_RegS2V_correction_fileNAME_pre.split('\\'))
+
+                # case_frame_pair = [case_index, frame_index, frame_index-1]
+            # case_dict = {'volume_ID': case_index, 'volume_name': moving_image_fileNAME, "volume_mask_name": moving_image_mask_fileNAME, 
+            #              "frame_name":fixed_image_fileNAME, "frame_name_pre": fixed_image_fileNAME_pre, 'frame_mask_name': fixed_image_mask_fileNAME,
+            #              "tfm_3DUS_CT_fileNAME": tfm_3DUS_CT_fileNAME, "tfm_RegS2V_initial_fileNAME": tfm_RegS2V_initial_fileNAME, "tfm_RegS2V_correction_fileNAME": tfm_RegS2V_correction_fileNAME, 
+            #              "tfm_RegS2V_correction_fileNAME_pre": tfm_RegS2V_correction_fileNAME_pre}
+            case_dict = {'volume_ID': case_index, 
+                         "frame_name":fixed_image_fileNAME,'frame_mask_name': fixed_image_mask_fileNAME,
+                         "tfm_RegS2V": [tfm_3DUS_CT_fileNAME, tfm_RegS2V_initial_fileNAME, tfm_RegS2V_correction_fileNAME, tfm_RegS2V_correction_fileNAME_pre],
+                         "tfm_gt_diff_mat": None, "tfm_gt_diff_dof": None,
+                         "tfm_RegS2V_initial_mat": None, "tfm_RegS2V_gt_mat": None, "frame_flip_flag": frame_flip_flag, "augment_flag": 'False'}
+            if augmented:
+                if phase == "train":
+                    if case_index < 15:
+                        case_dict['augment_flag'] = 'False'
+                    else:
+                        case_dict['augment_flag'] = 'True'
+
+            alldataset_LUT.append(case_dict)
+
+    data_LUT_np = np.array(alldataset_LUT)
+
+    # print("Lookuptable: ", data_LUT_np)
+    # print("size of lut:", data_LUT_np.shape)
+    if save_flag:
+        # dataframe = pd.DataFrame(data_LUT_np, columns=['volume case ID', 'Transform ID (gt)', 'Transform ID (initial)'])
+        # dataframe.to_csv(r"E:\PROGRAM\Project_PhD\Registration\Deepcode\FVR-Net\dataset_LUT.csv")
+        alldataset_xml = dicttoxml(alldataset_LUT, custom_root="all_cases")
+        dom = parseString(alldataset_xml)
+        dom.writexml( open(dataset_dict_fileNAME, 'w'),
+               indent="\t",
+               addindent="\t",
+               newl='\n')
+        
+        volume_dict_xml = dicttoxml(volume_LUT, custom_root="volume_cases")
+        dom = parseString(volume_dict_xml)
+        dom.writexml( open(volume_dict_fileNAME, 'w'),
+               indent="\t",
+               addindent="\t",
+               newl='\n')
+        
+        # print(dom.toprettyxml())
+    return alldataset_LUT, volume_LUT
 
 def CreateLookupTable(cases_metadata, project_dir, phase = 'train', save_flag = True):
 
@@ -416,9 +609,22 @@ class LoadRegistrationTransformd(MapTransform):
             tfm_RegS2V_correction_np_pre = ConvertITKTransform2NumpyArray(tfm_RegS2V_correction_pre) # from parent
             tfm_RegS2V_initial_np_from = tfm_3DUS_CT_np@tfm_RegS2V_initial_np@tfm_RegS2V_correction_np_pre # from parent
             tfm_RegS2V_initial_np_to = np.linalg.inv(tfm_RegS2V_initial_np_from) # (initial transform) to parent
+            if addNoise:
+                """adding noise translation: N(mean = 0, std = 3), rotation: N(mean = 0, std = 3)"""
+                translation_dof_noise = np.random.normal(0, 3, (3))
+                rotation_dof_noise = np.random.normal(0, 1.5, (3))
+                transform_dof_noise = np.concatenate((translation_dof_noise, rotation_dof_noise), axis =0)
+                # print("transform_dof_noise:{}".format(transform_dof_noise))
+                transform_noise_np = tools.dof2mat_np(transform_dof_noise) # 4 by 4 matrix
+                # print("transform_noise_np:{}".format(transform_noise_np))
+                """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
+                tfm_RegS2V_initial_np_to = T_scale@transform_noise_np@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
+            else:
+                """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
+                tfm_RegS2V_initial_np_to = T_scale@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
+
             # print("initial transform:", tfm_RegS2V_initial_np_to)
-            """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
-            tfm_RegS2V_initial_np_to = T_scale@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
+            
             """get transform_pytorch"""
             tfm_RegS2V_initial_pytorch = transform_conversion_ITK_to_pytorch(tfm_RegS2V_initial_np_to, self.volume_size) # this is the affine_transform_pytorch
             tfm_RegS2V_initial_mat_tensor = torch.from_numpy(tfm_RegS2V_initial_pytorch)
@@ -533,7 +739,7 @@ def evaluation_model_DeepS2VFF(model, dataset_frame, dataset_volume, num_cases, 
     
     loss_mse = nn.MSELoss()
     # loss_localNCC = LocalNormalizedCrossCorrelationLoss(spatial_dims=2, kernel_size= 13, kernel_type="rectangular", reduction="mean")
-    loss_localNCC = loss_F.LocalNCC(device = device, kernel_size =(71, 71), stride=(1, 1), padding="valid", win_eps= 100)
+    loss_localNCC = loss_F.LocalNCC_new(device = device, kernel_size =(91, 91), stride=(2, 2), padding="valid", win_eps= 0.98)
     
     tv_hist = {'testing': []}
     running_loss = 0.0
@@ -660,6 +866,175 @@ def evaluation_model_DeepS2VFF(model, dataset_frame, dataset_volume, num_cases, 
             tv_hist[phase].append([float(loss_combined), float(image_localNCC_loss), float(rotation_loss), float(translation_loss), float(time_elapsed)])
             print("=========================================================================================================================================")
             print('Testing(single frame): {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_rotation_dof), {:.4f}(loss_transaltion_dof), used {:.2f}(seconds)'.format(tv_hist[phase][-1][0], tv_hist[phase][-1][1], tv_hist[phase][-1][2], tv_hist[phase][-1][3], tv_hist[phase][-1][4]))
+            print("=========================================================================================================================================")    
+        update_info(best_epoch=0, current_epoch=0, lowest_val_TRE=0, tv_hist=tv_hist, testing=True)
+        # sys.exit()
+        running_loss += loss_combined 
+        running_localNCC += image_localNCC_loss
+        running_dof_rotation += rotation_loss 
+        running_dof_translation += translation_loss
+        running_time += time_elapsed
+
+    # sys.exit()
+    epoch_loss = running_loss / num_cases[phase]
+    epoch_running_localNCC = running_localNCC/num_cases[phase]
+    epoch_running_dof_rotation = running_dof_rotation/num_cases[phase]
+    epoch_running_dof_transaltion = running_dof_translation/num_cases[phase]
+    epoch_runing_time_avg = running_time/num_cases[phase]
+
+    tv_hist[phase].append([float(epoch_loss), float(epoch_running_localNCC), float(epoch_running_dof_rotation), float(epoch_running_dof_transaltion), float(epoch_runing_time_avg)])
+    # print('tv_hist\n{}'.format(tv_hist))
+
+    time_elapsed = time.time() - since
+    print('*' * 10 + 'Testing complete in {:.2f}s'.format(time_elapsed) + '*' * 10)
+    update_info(best_epoch=0, current_epoch=0, lowest_val_TRE=0, tv_hist=tv_hist, testing=True)
+    return tv_hist
+
+def evaluation_model_DeepS2VFF_simplified(model, dataset_frame, dataset_volume, num_cases, frame_index = None, visualize=False):
+    
+    loss_mse = nn.MSELoss()
+    # setting 1: larger image size [400, 320, 240]
+    # kernel_size = 91
+
+    # setting 2: volume size [200, 160, 120]
+    kernel_size = 51
+    loss_localNCC = loss_F.LocalNCC_new(device = device, kernel_size =(kernel_size, kernel_size), stride=(2, 2), padding="valid", win_eps= 0.98)
+
+    
+    tv_hist = {'testing': []}
+    running_loss = 0.0
+    running_localNCC = 0.0
+    running_dof_rotation = 0.0
+    running_dof_translation = 0.0
+    running_time = 0.0
+
+    phase = 'testing'
+    print('*' * 10 +'Network (DeepS2V feature fusion simplified (nodrop)) is in {}...'.format(phase) + '*' * 10)
+
+    model.eval()
+    model.require_grad = False
+
+    """loading volume first"""
+    vol_tensor = dataset_volume[dataset_frame[0]["volume_ID"]]["volume_name"]
+    vol_tensor = vol_tensor.unsqueeze(0).type(torch.FloatTensor)
+    vol_tensor = torch.permute(vol_tensor, (0, 1, 4, 3, 2)).type(torch.FloatTensor)
+    vol_tensor = vol_tensor.to(device)
+    volume_size = dataset_volume[0]['volume_name'].shape
+
+    """define the frame index"""
+    if frame_index == None:
+        print("Evaluating the whole video clip, in total {} frames".format(num_cases[phase]))
+        frame_index0 = 0
+        num_frames = num_cases[phase]
+    else:
+        print("Evaluating the single frame {}".format(frame_index))
+        frame_index0 = frame_index
+        num_frames = frame_index0 + 1
+    if visualize:
+        fig = plt.figure(figsize=(16, 9))
+    since = time.time()
+    for frame_ID in range(frame_index0, num_frames):
+        starting = time.time()
+
+        """loading frames"""
+        frame_tensor = dataset_frame[frame_ID]["frame_name"].type(torch.FloatTensor).to(device)
+        frame_tensor = torch.permute(frame_tensor, (0, 3, 2, 1))
+        frame_flip_flag = dataset_frame[frame_ID]["frame_flip_flag"]
+        if frame_flip_flag == "True":
+            frame_tensor = torch.flip(frame_tensor, [3])
+        frame_tensor = frame_tensor.unsqueeze(2)
+
+        # print("frame tensor shape: {}".format(frame_tensor.shape))
+
+        dof_tensor = dataset_frame[frame_ID]["tfm_gt_diff_dof"].type(torch.FloatTensor)
+        dof_tensor = dof_tensor.unsqueeze(0)
+        dof_tensor = dof_tensor.to(device)
+        dof_tensor = dof_tensor.squeeze(1)
+        # forward
+        with torch.set_grad_enabled(False):
+
+            initial_transform = dataset_frame[frame_ID]["tfm_RegS2V_initial_mat"]
+            initial_transform = initial_transform.type(torch.FloatTensor).to(device)
+            initial_transform = initial_transform.unsqueeze(0)
+            """get the initialized volume"""
+            grid_affine = F.affine_grid(theta= initial_transform[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
+            vol_initialized = F.grid_sample(vol_tensor, grid_affine, align_corners=True)
+            
+            # vol_resampled, dof_estimated = model(vol=vol_initialized, frame=frame_tensor, initial_transform = initial_transform, device=device) # shape batch_size*6
+            vol_resampled, dof_estimated = model(vol=vol_initialized, frame=frame_tensor, initial_transform = initial_transform, vol_original=vol_tensor, device=device) # shape batch_size*6
+                        
+            """image intensity-based loss (localNCC)"""
+            frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
+            ending = time.time()
+
+            vol_size = [vol_initialized.shape[4], vol_initialized.shape[3], vol_initialized.shape[2]]
+            dof_estimated_ITK = transform_conversion_dof_normalized_to_ITK(dof_normalized=dof_estimated, vol_size = vol_size, device=device)
+            dof_gt_ITK = transform_conversion_dof_normalized_to_ITK(dof_normalized=dof_tensor, vol_size = vol_size, device=device)
+            
+            """rotation loss (deg)"""
+            rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
+            rotation_loss_ITK = loss_mse(dof_estimated_ITK[:, 3:], dof_gt_ITK[:, 3:])
+            """translation loss (mm)"""
+            translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
+            translation_loss_ITK = loss_mse(dof_estimated_ITK[:, :3], dof_gt_ITK[:, :3])
+            frame_tensor_gt = frame_tensor.squeeze(2)
+            # frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
+        
+            ##############################################################
+            # """visualize the initialized images"""
+            if visualize:
+                sampled_frame_est = vol_resampled[:,:, int(volume_size[3]*0.5), :, :]
+                sampled_frame_DeepS2VFF_np = torch.Tensor.numpy(sampled_frame_est.detach().cpu())
+                sampled_frame_ini = vol_initialized[:,:, int(volume_size[3]*0.5), :, :]
+                sampled_frame_DeepS2VFF_ini_np = torch.Tensor.numpy(sampled_frame_ini.detach().cpu())
+                
+                affine_transform_gt = dataset_frame[frame_ID]['tfm_RegS2V_gt_mat'].type(torch.FloatTensor).to(device)
+                affine_transform_gt = affine_transform_gt.unsqueeze(0)
+                grid_affine_gt = F.affine_grid(theta= affine_transform_gt[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
+                vol_gt = F.grid_sample(vol_tensor, grid_affine_gt, align_corners=True)
+                sampled_frame_gt = vol_gt[:,:, int(volume_size[3]*0.5), :, :]
+                sampled_frame_ITK_np = torch.Tensor.numpy(sampled_frame_gt.detach().cpu())
+                
+                frame_gt_np = torch.Tensor.numpy(frame_tensor_gt.detach().cpu())
+                # print("frame_gt_np",frame_gt_np.size)
+                
+                ax1 = fig.add_subplot(141)
+                ax2 = fig.add_subplot(142)
+                ax3 = fig.add_subplot(143)
+                ax4 = fig.add_subplot(144)
+                ax1.imshow(frame_gt_np[0, 0, :, :], cmap = "gray")
+                ax1.set_title("US frame (target)")
+                ax2.imshow(sampled_frame_ITK_np[0, 0, :, :], cmap = "gray")
+                ax2.set_title("Resampled image (ITK approach)")
+                ax3.imshow(sampled_frame_DeepS2VFF_ini_np[0, 0, :, :], cmap = "gray")
+                ax3.set_title("Resampled image (DeepS2VFF initial)")
+                ax4.imshow(sampled_frame_DeepS2VFF_np[0, 0, :, :], cmap = "gray")
+                ax4.set_title("Resampled image (DeepS2VFF)")
+                plt.show(block=False)
+                plt.pause(1.0)
+                plt.clf()
+
+            # sys.exit()
+            
+            image_localNCC_loss, ROI = loss_localNCC(frame_estimated, frame_tensor_gt)
+            
+            # coefficients for loss functinos
+            alpha = 100.0
+            beta = 100.0
+            gamma = 1.0
+            loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+            
+            # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
+            # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
+            # print("loss_combined device (guess cuda): ", loss_combined.device)
+            
+            # print("loss_combined: ", loss_combined)
+            time_elapsed = ending-starting
+            tv_hist[phase].append([float(loss_combined), float(image_localNCC_loss), float(rotation_loss), float(translation_loss), float(time_elapsed)])
+            print("=========================================================================================================================================")
+            print('Testing(single frame): {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_rotation_dof), {:.4f}(loss_transaltion_dof), used {:.2f}(seconds)'.format(tv_hist[phase][-1][0], tv_hist[phase][-1][1], tv_hist[phase][-1][2], tv_hist[phase][-1][3], tv_hist[phase][-1][4]))
+            print("(dof-est_ITK){}".format(torch.Tensor.numpy(dof_estimated_ITK[0,:].detach().cpu())))
+            print("(dof-gt_ITK) {}".format(torch.Tensor.numpy(dof_gt_ITK[0,:].detach().cpu())))
             print("=========================================================================================================================================")    
         update_info(best_epoch=0, current_epoch=0, lowest_val_TRE=0, tv_hist=tv_hist, testing=True)
         # sys.exit()
@@ -829,6 +1204,149 @@ def evaluation_model_FVNet(model, dataset_frame, dataset_volume, num_cases, fram
     update_info(best_epoch=0, current_epoch=0, lowest_val_TRE=0, tv_hist=tv_hist, testing=True)
     return tv_hist
 
+def train_nondeep_model(dataset_frame, dataset_volume, frame_index, num_cases, visualize = False):
+    
+    """Pre-setting (same as ITK global one)"""
+    lr_localNCC = 0.001
+    num_iters = 100
+    stop_thrld = 1e-4
+    phase = 'testing'
+    """loading volume"""
+    volume = dataset_volume[dataset_frame[0]["volume_ID"]]["volume_name"]
+    volume = volume.unsqueeze(0).type(torch.FloatTensor)
+    volume = torch.permute(volume, (0, 1, 4, 3, 2)).type(torch.FloatTensor)
+    volume = volume.to(device)
+    volume_size = dataset_volume[0]['volume_name'].shape
+    
+    loss_mse = nn.MSELoss()
+    # loss_localNCC = LocalNormalizedCrossCorrelationLoss(spatial_dims=2, kernel_size= 13, kernel_type="rectangular", reduction="mean")
+    kernel_size = 51
+    loss_localNCC = loss_F.LocalNCC_new(device = device, kernel_size =(kernel_size, kernel_size), stride=(2, 2), padding="valid", win_eps= 0.98)
+    
+    runtime_total = []
+    if frame_index == None:
+        print("Evaluating the whole video clip, in total {} frames".format(num_cases[phase]))
+        frame_index0 = 0
+        num_frames = num_cases[phase]
+    else:
+        print("Evaluating the single frame {}".format(frame_index))
+        frame_index0 = frame_index
+        num_frames = frame_index0 + 1
+    if visualize:
+        fig = plt.figure(figsize=(15, 9))
+
+    for frame_index in range(frame_index0, num_frames):
+        starting = time.time()
+        """initialize rotation and transaltion vector"""
+        rtvec_est = torch.zeros((1, 6), requires_grad = True, device = device)
+        # print("rtvec_est is leaf_variable (guess True): ", rtvec_est.is_leaf)
+        optimizer_nondeep_model = optim.SGD([rtvec_est], lr=lr_localNCC, momentum=0.9)        
+        scheduler_nondeep_model = lr_scheduler.CyclicLR(optimizer_nondeep_model, base_lr=0.001, max_lr=0.003,step_size_up=20)
+
+        rtvec_gt = dataset_frame[frame_index]["tfm_gt_diff_dof"].type(torch.FloatTensor)
+        # rtvec_gt = rtvec_gt.unsqueeze(0).type(torch.FloatTensor)
+        rtvec_gt = rtvec_gt.to(device)
+        # print("rtvec_gt shape:{}".format(rtvec_gt.shape))
+        # print("rtvec_gt: {}".format(rtvec_gt))
+        
+
+        """loading the initial transformation from (arm tracking + transformaion of 3DUS-CT/MRI)"""
+        initial_transform = dataset_frame[frame_index]["tfm_RegS2V_initial_mat"]
+        affine_transform_initial = initial_transform.type(torch.FloatTensor).to(device)
+        # print(affine_transform_initial.shape)
+        
+        
+        lossLocalNCC_output_list = torch.zeros(1, device=device)
+        # lossRot_output_list = torch.zeros(1, device = device)
+        # lossTrans_output_list = torch.zeros(1, device = device)
+        
+        for iter in range(num_iters):
+
+            optimizer_nondeep_model.zero_grad()
+
+            """loading frame"""
+            frame_tensor = torch.permute(dataset_frame[frame_index]["frame_name"].type(torch.FloatTensor), (0, 3, 2, 1))
+            frame_flip_flag = dataset_frame[frame_index]["frame_flip_flag"]
+            if frame_flip_flag == "True":
+                frame_tensor = torch.flip(frame_tensor, [3])
+            frame_tensor = frame_tensor.type(torch.FloatTensor)
+            frame_tensor = frame_tensor.to(device)
+            """get transformation"""
+            correction_transform = tools.dof2mat_tensor(input_dof=rtvec_est).type(torch.FloatTensor).to(device)
+            affine_transform_combined = torch.matmul(correction_transform, affine_transform_initial)
+            # print(correction_transform.shape)
+            # print(affine_transform_combined.shape)
+            """Resampling and reslicing the volume """
+            grid_affine = F.affine_grid(theta= affine_transform_combined[:, 0:3, :], size = torch.Size([1, 1, volume_size[3], volume_size[2], volume_size[1]]), align_corners=True)
+            
+            """get resampled volume and frame"""
+            vol_resampled = F.grid_sample(volume, grid_affine, align_corners=True)
+            # resampled_image_initial_np = torch.Tensor.numpy(vol_resampled)
+            sampled_frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :]
+            sampled_frame_estimated = sampled_frame_estimated.to(device)
+            """rotation loss (deg)"""
+            # rotation_loss = loss_mse(rtvec_est[:, 3:], rtvec_gt[:, 3:])
+            """translation loss (mm)"""
+            # translation_loss = loss_mse(rtvec_est[:, :3], rtvec_gt[:, :3])
+
+            """image intensity-based loss (localNCC)"""
+            image_localNCC_loss, ROI = loss_localNCC(sampled_frame_estimated, frame_tensor)
+            
+            # loss_combined = image_localNCC_loss
+            
+            rtvec_est.retain_grad()
+            image_localNCC_loss.backward()
+            optimizer_nondeep_model.step()
+            scheduler_nondeep_model.step()
+            # frame_gt_np = torch.Tensor.numpy(frame_tensor.detach().cpu())
+            # sampled_frame_estimated_np = torch.Tensor.numpy(sampled_frame_estimated.detach().cpu())
+            if iter == 0:
+                frame_gt_np = torch.Tensor.numpy(frame_tensor.detach().cpu())
+                sampled_frame_estimated_np = torch.Tensor.numpy(sampled_frame_estimated.detach().cpu())
+                initial_sampled_frame_est_np = sampled_frame_estimated_np
+                lossLocalNCC_output_list = image_localNCC_loss.reshape(1)
+                # lossRot_output_list = rotation_loss.reshape(1)
+                # lossTrans_output_list = translation_loss.reshape(1)
+            else:
+                lossLocalNCC_output_list =torch.cat((lossLocalNCC_output_list, image_localNCC_loss.reshape(1)))
+                # lossRot_output_list = torch.cat((lossRot_output_list, rotation_loss.reshape(1)))
+                # lossTrans_output_list = torch.cat((lossTrans_output_list, translation_loss.reshape(1)))
+
+            if iter > 10:
+                stop_flag = torch.std(lossLocalNCC_output_list[-5:]) < stop_thrld
+                if stop_flag:
+                    sampled_frame_estimated_np = torch.Tensor.numpy(sampled_frame_estimated.detach().cpu())
+                    break
+                
+        end = time.time()
+        time_elapsed = end - starting
+        runtime_total.append(time_elapsed)
+        print('*' * 10 + 'Training complete in {:.2f}s'.format(time_elapsed) + '*' * 10)
+    
+        lossLocalNCC_output_list_np = torch.Tensor.numpy(lossLocalNCC_output_list.detach().cpu())
+        # lossRot_output_list_np = torch.Tensor.numpy(lossRot_output_list.detach().cpu())
+        # lossTrans_output_list_np = torch.Tensor.numpy(lossTrans_output_list.detach().cpu())
+
+        """get registered image using ITK global NCC"""
+        transform_gt = dataset_frame[frame_index]["tfm_RegS2V_gt_mat"]
+        affine_transform_gt = transform_gt.type(torch.FloatTensor).to(device)
+        affine_transform_gt = affine_transform_gt.unsqueeze(0)
+        # print(affine_transform_gt)
+        # print(affine_transform_gt.shape)
+        """Resampling and reslicing the volume """
+        grid_affine_gt = F.affine_grid(theta= affine_transform_gt[:, 0:3, :], size = torch.Size([1, 1, volume_size[3], volume_size[2], volume_size[1]]), align_corners=True)
+        """get resampled volume and frame"""
+        vol_resampled_gt = F.grid_sample(volume, grid_affine_gt, align_corners=True)
+        # resampled_image_initial_np = torch.Tensor.numpy(vol_resampled)
+        sampled_frame_gt = vol_resampled_gt[:,:, int(volume_size[3]*0.5), :, :]
+        sampled_frame_gt_np = torch.Tensor.numpy(sampled_frame_gt.detach().cpu())
+        
+        if visualize:
+            # util_plot.plot_nondeep_model_comb(fig, lossLocalNCC_output_list_np, lossRot_output_list_np, lossTrans_output_list_np, initial_sampled_frame_est_np, sampled_frame_estimated_np, frame_gt_np)
+            # util_plot.plot_nondeep_model_comb_with_ITK(fig, lossLocalNCC_output_list_np, lossRot_output_list_np, lossTrans_output_list_np, initial_sampled_frame_est_np, sampled_frame_estimated_np, frame_gt_np, sampled_frame_gt_np)
+            util_plot.plot_nondeep_model_image_comb_with_ITK(fig, sampled_frame_estimated_np, frame_gt_np, sampled_frame_gt_np)
+    return runtime_total
+
 
 if __name__ == '__main__':
     
@@ -851,12 +1369,18 @@ if __name__ == '__main__':
     
     # training_dataset_dict, training_volume_dict = CreateLookupTable(training_cases_metadata,project_dir= project_dir, phase= "train", save_flag=True)
     # validation_dataset_dict, validation_volume_dict = CreateLookupTable(validation_cases_metadata, project_dir= project_dir, phase= "val", save_flag=True)
-    testing_dataset_dict, testing_volume_dict = CreateLookupTable(testing_cases_metadata, project_dir= project_dir, phase= "test", save_flag=True)
-    
+    # testing_dataset_dict, testing_volume_dict = CreateLookupTable(testing_cases_metadata, project_dir= project_dir, phase= "test", save_flag=True)
+    testing_dataset_dict, testing_volume_dict = CreateLookupTable_new(testing_cases_metadata, project_dir= project_dir, phase= "test", save_flag=True, augmented = False)
     """preprocessing the dataset(volume data, 2D US frame data and transformation data)"""
+    """preprocessing: setting 1"""
     resample_spacing = 0.5
     resize_scale = 1/resample_spacing
     volume_size = [400, 320, 240]
+
+    # """preprocessing: setting 2"""
+    # resample_spacing = 1
+    # resize_scale = 1/resample_spacing
+    # volume_size = [200, 160, 120]
 
     # preprocess the 3D US volume data
     transform_3DUS = Compose(
@@ -875,15 +1399,15 @@ if __name__ == '__main__':
     # prepocess the 2D US and registration transformation data
     transform_2DUS = Compose(
         [
-            LoadRegistrationTransformd(keys=["tfm_RegS2V"], scale=2, volume_size=volume_size),
+            LoadRegistrationTransformd(keys=["tfm_RegS2V"], scale=resize_scale, volume_size=volume_size),
             LoadImaged(keys=["frame_name", "frame_mask_name"], reader=ITKReader(reverse_indexing=False, affine_lps_to_ras=False), image_only=False),
             # MaskIntensityd(keys=["image","image_mask"], mask_data= mask_image_array),
-            MaskIntensityd(keys=["frame_name"], mask_key= "frame_mask_name"),
-            EnsureChannelFirstd(keys = ["frame_name"]),
-            Spacingd(keys=["frame_name"], pixdim=(resample_spacing, resample_spacing, resample_spacing), mode=("bilinear")),
-            SpatialPadd(keys=["frame_name"], spatial_size=[volume_size[0], volume_size[1], 1], method="symmetric", mode="constant"),
-            CenterSpatialCropd(keys=["frame_name"], roi_size=[volume_size[0], volume_size[1], 1]), # when the spacing is 0.5*0.5*0.5
-            ScaleIntensityd(keys=["frame_name"], minv= 0.0, maxv = 1.0, dtype= np.float32)
+            MaskIntensityd(keys=["frame_name", "frame_mask_name"], mask_key= "frame_mask_name"),
+            EnsureChannelFirstd(keys = ["frame_name", "frame_mask_name"]),
+            Spacingd(keys=["frame_name", "frame_mask_name"], pixdim=(resample_spacing, resample_spacing, resample_spacing), mode=("bilinear")),
+            SpatialPadd(keys=["frame_name", "frame_mask_name"], spatial_size=[volume_size[0], volume_size[1], 1], method="symmetric", mode="constant"),
+            CenterSpatialCropd(keys=["frame_name", "frame_mask_name"], roi_size=[volume_size[0], volume_size[1], 1]), # when the spacing is 0.5*0.5*0.5
+            ScaleIntensityd(keys=["frame_name", "frame_mask_name"], minv= 0.0, maxv = 1.0, dtype= np.float32)
         ]
     )
     
@@ -914,21 +1438,54 @@ if __name__ == '__main__':
         if TRAINED_MODEL == 1:
             model = RegS2Vnet.mynet3(layers=[3, 8, 36, 3]).to(device=device)
             # pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_1/", 'RegS2V_best_Generator_30.pth') # Yan et al.'s method pretrained model
-            trained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_supervised", 'RegS2V_best_Generator_35.pth') # Yan et al.'s method pretrained model
+            # trained_model = path.join("E:\PROGRAM\Project_PhD\Registration\DeepRegS2V\src\outputs\models\FVNet_supervised", 'RegS2V_best_Generator_35.pth') # Yan et al.'s method pretrained model
+            trained_model = path.join("E:\PROGRAM\Project_PhD\Registration\DeepRegS2V\src\outputs\models\FVNet_plus_noise", 'DeepFVNet_training_scratch_25.pth') # Yan et al.'s method pretrained model
+            
             print("Trained model: {}".format(trained_model))
             model.load_state_dict(torch.load(trained_model, map_location=device))
-            tv_hist = evaluation_model_FVNet(model, testing_dataset_2DUS, testing_dataset_3DUS, num_cases, frame_index = None, visualize=False)
+            tv_hist = evaluation_model_FVNet(model, testing_dataset_2DUS, testing_dataset_3DUS, num_cases, frame_index = None, visualize=True)
 
         if TRAINED_MODEL == 2:
             model = RegS2Vnet.RegS2Vnet_featurefusion(layers=[3, 3, 8, 3]).to(device=device)
-            trained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_featurefusion", 'RegS2V_feature_fusion_refine_25.pth') # Yan et al.'s method pretrained model
+            # trained_model = path.join("E:\PROGRAM\Project_PhD\Registration\DeepRegS2V\src\outputs\models\DeepS2VFF_weaklySupervised", 'RegS2V_feature_fusion_refine_25.pth') # Yan et al.'s method pretrained model
+            # trained_model = path.join("E:\PROGRAM\Project_PhD\Registration\DeepRegS2V\src\outputs\models\DeepS2VFF_plus_noise", 'DeepS2VFF_refine_5_dofonly.pth') # Yan et al.'s method pretrained model
+            trained_model = path.join("E:\PROGRAM\Project_PhD\Registration\DeepRegS2V\src\outputs\models\DeepS2VFF_plus_noise_1", 'DeepS2VFF_refine_leakyReLU_localNCC_95_unsupervised.pth') # Yan et al.'s method pretrained model
+            
             print("Trained model: {}".format(trained_model))
             model.load_state_dict(torch.load(trained_model, map_location=device))
-            tv_hist = evaluation_model_DeepS2VFF(model, testing_dataset_2DUS, testing_dataset_3DUS, num_cases, frame_index = None, visualize=False)
+            tv_hist = evaluation_model_DeepS2VFF(model, testing_dataset_2DUS, testing_dataset_3DUS, num_cases, frame_index = None, visualize=True)
+
+        if TRAINED_MODEL == 3:
+            model = RegS2Vnet.DeepRCS2V(num_cascades=3, device= device)
+            trained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_unsupervised_1/", 'DeepS2VFF_simplified_490_weak_super.pth') # 
+            model.load_state_dict(torch.load(pretrained_model, map_location=device))
+            
+            tv_hist = train_DeepRCS2V_model(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
+        
+        if TRAINED_MODEL == 4:
+            model = RegS2Vnet.RegS2Vnet_featurefusion_simplified().to(device=device)
+            trained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_unsupervised_1/", 'DeepS2VFF_simplified_490_weak_super.pth') # 
+            model.load_state_dict(torch.load(trained_model, map_location=device))
+            print("RESUME model: {}".format(trained_model))
+            tv_hist = train_model_initialized(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
+        
+        if TRAINED_MODEL == 5:
+            model = RegS2Vnet.RegS2Vnet_featurefusion_simplified_nondrop().to(device=device)
+            trained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_nondrop/", 'DeepS2VFF_simplified_nodrop_120_unsuper_lr7_b1_nondrop.pth') # 
+            model.load_state_dict(torch.load(trained_model, map_location=device))
+            print("RESUME model: {}".format(trained_model))
+            tv_hist = evaluation_model_DeepS2VFF_simplified(model, testing_dataset_2DUS, testing_dataset_3DUS, num_cases, frame_index = None, visualize=False)
 
         json_obj = json.dumps(tv_hist)
-        f = open(os.path.join(output_dir, 'results_LPT027_pre02_needle01.json'), 'w')
+        f = open(os.path.join(output_dir, 'results_LHV05_pre02_sweep03.json'), 'w')
         # write json object to file
         f.write(json_obj)
         # close file
         f.close()
+    if NONDEEP_MODEL:
+        # frame_index = 6
+         
+        runtime_total = train_nondeep_model(testing_dataset_2DUS, testing_dataset_3DUS, frame_index=None, num_cases=num_cases, visualize=False)
+        runtime_mean = np.mean(runtime_total)
+        runtime_std = np.std(runtime_total)
+        print("runtime (mean+std): {}s + {}s".format(runtime_mean, runtime_std))

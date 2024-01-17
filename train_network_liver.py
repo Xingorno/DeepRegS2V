@@ -72,7 +72,7 @@ parser.add_argument('-m', '--model_filename',
 parser.add_argument('-l', '--learning_rate',
                     type=float,
                     help='Learning rate',
-                    default=1e-6)
+                    default=1e-7)
 
 parser.add_argument('-d', '--device_no',
                     type=int,
@@ -88,7 +88,7 @@ parser.add_argument('-e', '--epochs',
 parser.add_argument('-b', '--batch_size',
                     type=int,
                     help='number of batch size',
-                    default=4)
+                    default=1)
 
 parser.add_argument('-n', '--network_type',
                     type=str,
@@ -115,18 +115,18 @@ batch_size = args.batch_size
 num_epochs = args.epochs
 
 project_dir = os.getcwd()
-output_dir = os.path.join(project_dir, "src/outputs_DeepS2VFF_simplified_2")
+output_dir = os.path.join(project_dir, "src/outputs_DeepS2VFF_simplified_nondrop")
 isExist = os.path.exists(output_dir)
 if not isExist:
     os.makedirs(output_dir)
 
 DEEP_MODEL = True
 NONDEEP_MODEL = False
-RESUME_MODEL = False
-TRAINED_MODEL = 4
-trained_model_list = {'1': 'FVnet-supervised', '2': 'DeepS2VFF', '3':'DeepRCS2V', '4':"DeepS2VFF_simplified"}
+RESUME_MODEL = True
+TRAINED_MODEL = 5
+trained_model_list = {'1': 'FVnet-supervised', '2': 'DeepS2VFF', '3':'DeepRCS2V', '4':"DeepS2VFF_simplified", '5':"DeepS2VFF_simplified_nodrop" }
 # net = 'DeepS2VFF_refine_leakyReLU_localNCC'
-net = 'DeepS2VFF_simplified'
+net = 'DeepS2VFF_simplified_nondrop'
 
 addNoise = True
 
@@ -299,7 +299,7 @@ def CreateLookupTable(cases_metadata, project_dir, phase = 'train', save_flag = 
 
         # get the transform metadata (slice to volume registration)
         tfm_RegS2V_metadata = case_root.find('slice_to_volume_registration')
-        for frame_index in range(rangeMin, rangeMax + 1):
+        for frame_index in range(rangeMin, rangeMax + 1, 2):
             num_letters_frame_index = len(str(frame_index))
             if num_letters_frame_index == 1:
                 full_frame_index = '000' + str(frame_index)       
@@ -385,6 +385,182 @@ def CreateLookupTable(cases_metadata, project_dir, phase = 'train', save_flag = 
         # print(dom.toprettyxml())
     return alldataset_LUT, volume_LUT
 
+def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_flag = True, augmented = True):
+
+    project_src_dir = os.path.join(project_dir, "src")
+    project_data_dir = os.path.join(project_dir, "data")
+    
+    if phase == 'train':
+        if augmented:
+            dataset_dict_fileNAME = os.path.join(project_src_dir, "training_dataset_dict_aug.xml")
+            volume_dict_fileNAME = os.path.join(project_src_dir, "training_volume_dict_aug.xml")
+        else:
+            dataset_dict_fileNAME = os.path.join(project_src_dir, "training_dataset_dict.xml")
+            volume_dict_fileNAME = os.path.join(project_src_dir, "training_volume_dict.xml")
+    elif phase == 'val':
+        dataset_dict_fileNAME = os.path.join(project_src_dir, "validation_dataset_dict.xml")
+        volume_dict_fileNAME = os.path.join(project_src_dir, "validation_volume_dict.xml")
+    elif phase == 'test':
+        dataset_dict_fileNAME = os.path.join(project_src_dir, "test_dataset_dict.xml")
+        volume_dict_fileNAME = os.path.join(project_src_dir, "test_volume_dict.xml")
+    else:
+        dataset_dict_fileNAME = os.path.join(project_src_dir, phase + "_dataset_dict.xml")
+        volume_dict_fileNAME = os.path.join(project_src_dir, phase + "_volume_dict.xml")
+    
+    if platform.system() == "Linux":
+        dataset_dict_fileNAME = '/'.join(dataset_dict_fileNAME.split('\\'))
+        volume_dict_fileNAME = '/'.join(volume_dict_fileNAME.split('\\'))
+
+    num_of_cases = len(cases_metadata) # number of volumes
+    alldataset_LUT = []
+    volume_LUT = []
+    for case_index in range(0, num_of_cases):
+        
+
+        path = os.path.join(project_data_dir, cases_metadata[case_index].text)
+        if platform.system() == 'Linux':
+            path = '/'.join(path.split('\\'))
+        case_tree = ET.parse(path)
+        case_root = case_tree.getroot()
+
+        # get the volume name (moving image)
+        moving_image_metadata = case_root.find('moving_image')
+        moving_image_fileNAME = os.path.join(project_data_dir, moving_image_metadata.find('directory').text, moving_image_metadata.find('name_raw_US_volume').text)
+        if platform.system() == 'Linux':
+            moving_image_fileNAME = '/'.join(moving_image_fileNAME.split('\\'))
+        
+
+        # get the mask of volume (moving image)
+        moving_image_mask_metadata = case_root.find('moving_image_mask')
+        moving_image_mask_fileNAME = os.path.join(project_data_dir, moving_image_mask_metadata.find('directory').text, moving_image_mask_metadata.find('name_rawdata').text)
+        if platform.system() == 'Linux':
+            moving_image_mask_fileNAME = '/'.join(moving_image_mask_fileNAME.split('\\'))
+        
+
+        # get the fixed image
+        fixed_images_metadata = case_root.find('fixed_image')
+        rangeMin = int(fixed_images_metadata.find('rangeMin').text)
+        rangeMax = int(fixed_images_metadata.find('rangeMax').text)
+
+        # get the mask of fixed image
+        fixed_image_mask_metadata = case_root.find('fixed_image_mask')
+        fixed_image_mask_fileNAME = os.path.join(project_data_dir, fixed_image_mask_metadata.find('directory').text, fixed_image_mask_metadata.find('name').text)
+        if platform.system() == 'Linux':
+            fixed_image_mask_fileNAME = '/'.join(fixed_image_mask_fileNAME.split('\\'))
+        
+
+        volume_case_dict = {'volume_ID': case_index,'volume_name': moving_image_fileNAME, "volume_mask_name": moving_image_mask_fileNAME}
+        volume_LUT.append(volume_case_dict)
+        # get the transform (3DUS to CT/MRI)
+        tfm_3DUS_CT_metadata = case_root.find('transform_3DUS_CT')
+        tfm_3DUS_CT_fileNAME = os.path.join(project_data_dir, tfm_3DUS_CT_metadata.find('directory').text, tfm_3DUS_CT_metadata.find('name').text)
+        if platform.system() == 'Linux':
+            tfm_3DUS_CT_fileNAME = '/'.join(tfm_3DUS_CT_fileNAME.split('\\'))
+
+        
+        # get the frame flip flag
+        US_image_setting_metadata = case_root.find('US_image_setting')
+        frame_flip_flag = US_image_setting_metadata.find("flip").text
+
+        # get the transform metadata (slice to volume registration)
+        tfm_RegS2V_metadata = case_root.find('slice_to_volume_registration')
+        if augmented:
+            step = 2
+        else:
+            step = 1
+        for frame_index in range(rangeMin, rangeMax + 1, step): # add step
+            num_letters_frame_index = len(str(frame_index))
+            if num_letters_frame_index == 1:
+                full_frame_index = '000' + str(frame_index)       
+            elif num_letters_frame_index == 2:
+                full_frame_index = '00' + str(frame_index)      
+            elif num_letters_frame_index == 3:
+                full_frame_index = '0' + str(frame_index)
+            elif num_letters_frame_index == 4:
+                full_frame_index = str(frame_index)
+            else :
+                print("checking out the maximum length of the filename!")
+            
+            # get the fixed image filename
+            fixed_image_filename = "Image_" + full_frame_index + ".mha"
+            fixed_image_fileNAME = os.path.join(project_data_dir, fixed_images_metadata.find('directory').text, fixed_image_filename) 
+            if platform.system() == 'Linux':
+                fixed_image_fileNAME = '/'.join(fixed_image_fileNAME.split('\\'))
+
+            initial_frame_name = "initial_"+ full_frame_index + ".tfm"
+            correction_frame_name = "correction_" + full_frame_index+ ".tfm"
+            tfm_RegS2V_initial_fileNAME = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('initial_folder').text, initial_frame_name)
+            tfm_RegS2V_correction_fileNAME = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('correction_folder').text, correction_frame_name)
+            if platform.system() == 'Linux':
+                tfm_RegS2V_initial_fileNAME = '/'.join(tfm_RegS2V_initial_fileNAME.split('\\'))
+                tfm_RegS2V_correction_fileNAME = '/'.join(tfm_RegS2V_correction_fileNAME.split('\\'))
+
+            if frame_index == rangeMin:
+                # fixed_image_fileNAME_pre = fixed_image_fileNAME
+                tfm_RegS2V_correction_fileNAME_pre = tfm_RegS2V_correction_fileNAME
+            else:
+                num_letters_frame_index_pre = len(str(frame_index-1))
+                if num_letters_frame_index_pre == 1:
+                    full_frame_index_pre = '000' + str(frame_index-1)       
+                elif num_letters_frame_index_pre == 2:
+                    full_frame_index_pre = '00' + str(frame_index-1)      
+                elif num_letters_frame_index_pre == 3:
+                    full_frame_index_pre = '0' + str(frame_index-1)
+                elif num_letters_frame_index_pre == 4:
+                    full_frame_index_pre = str(frame_index-1)
+                else :
+                    print("checking out the maximum length of the filename!")
+                # fixed_image_filename_pre = "Image_" + full_frame_index_pre + ".mha"
+                # fixed_image_fileNAME_pre = os.path.join(fixed_images_metadata.find('directory').text, fixed_image_filename_pre)
+
+                correction_frame_name = "correction_" + full_frame_index_pre+ ".tfm"
+                tfm_RegS2V_correction_fileNAME_pre = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('correction_folder').text, correction_frame_name)
+                if platform.system() == 'Linux':
+                    tfm_RegS2V_correction_fileNAME_pre = '/'.join(tfm_RegS2V_correction_fileNAME_pre.split('\\'))
+
+                # case_frame_pair = [case_index, frame_index, frame_index-1]
+            # case_dict = {'volume_ID': case_index, 'volume_name': moving_image_fileNAME, "volume_mask_name": moving_image_mask_fileNAME, 
+            #              "frame_name":fixed_image_fileNAME, "frame_name_pre": fixed_image_fileNAME_pre, 'frame_mask_name': fixed_image_mask_fileNAME,
+            #              "tfm_3DUS_CT_fileNAME": tfm_3DUS_CT_fileNAME, "tfm_RegS2V_initial_fileNAME": tfm_RegS2V_initial_fileNAME, "tfm_RegS2V_correction_fileNAME": tfm_RegS2V_correction_fileNAME, 
+            #              "tfm_RegS2V_correction_fileNAME_pre": tfm_RegS2V_correction_fileNAME_pre}
+            case_dict = {'volume_ID': case_index, 
+                         "frame_name":fixed_image_fileNAME,'frame_mask_name': fixed_image_mask_fileNAME,
+                         "tfm_RegS2V": [tfm_3DUS_CT_fileNAME, tfm_RegS2V_initial_fileNAME, tfm_RegS2V_correction_fileNAME, tfm_RegS2V_correction_fileNAME_pre],
+                         "tfm_gt_diff_mat": None, "tfm_gt_diff_dof": None,
+                         "tfm_RegS2V_initial_mat": None, "tfm_RegS2V_gt_mat": None, "frame_flip_flag": frame_flip_flag, "augment_flag": 'False'}
+            if augmented:
+                if phase == "train":
+                    if case_index < 15:
+                        case_dict['augment_flag'] = 'False'
+                    else:
+                        case_dict['augment_flag'] = 'True'
+
+            alldataset_LUT.append(case_dict)
+
+    data_LUT_np = np.array(alldataset_LUT)
+
+    # print("Lookuptable: ", data_LUT_np)
+    # print("size of lut:", data_LUT_np.shape)
+    if save_flag:
+        # dataframe = pd.DataFrame(data_LUT_np, columns=['volume case ID', 'Transform ID (gt)', 'Transform ID (initial)'])
+        # dataframe.to_csv(r"E:\PROGRAM\Project_PhD\Registration\Deepcode\FVR-Net\dataset_LUT.csv")
+        alldataset_xml = dicttoxml(alldataset_LUT, custom_root="all_cases")
+        dom = parseString(alldataset_xml)
+        dom.writexml( open(dataset_dict_fileNAME, 'w'),
+               indent="\t",
+               addindent="\t",
+               newl='\n')
+        
+        volume_dict_xml = dicttoxml(volume_LUT, custom_root="volume_cases")
+        dom = parseString(volume_dict_xml)
+        dom.writexml( open(volume_dict_fileNAME, 'w'),
+               indent="\t",
+               addindent="\t",
+               newl='\n')
+        
+        # print(dom.toprettyxml())
+    return alldataset_LUT, volume_LUT
+
 class LoadRegistrationTransformd(MapTransform):
     def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False, scale = 1, volume_size = None) -> None:
         super().__init__(keys, allow_missing_keys)
@@ -394,6 +570,7 @@ class LoadRegistrationTransformd(MapTransform):
     def __call__(self, data):
         """Keys tfm_3DUS_CT_fileNAME: ["tfm_3DUS_CT_fileNAME", "tfm_RegS2V_initial_fileNAME", "tfm_RegS2V_correction_fileNAME", "tfm_RegS2V_correction_fileNAME_pre"]""" 
         for key in self.keys:
+        
             tfm_3DUS_CT = sitk.ReadTransform(data[key][0]) # transform (from parent) LPS
             # print(tfm_3DUS_CT)
             tfm_3DUS_CT_np = ConvertITKTransform2NumpyArray(tfm_3DUS_CT) # from parent
@@ -442,10 +619,14 @@ class LoadRegistrationTransformd(MapTransform):
             tfm_RegS2V_initial_np_to = np.linalg.inv(tfm_RegS2V_initial_np_from) # (initial transform) to parent
             # print("initial transform:", tfm_RegS2V_initial_np_to)
             # addNoise = True
-            if addNoise:
+            addAugment = data['augment_flag']
+            # addAugment = 'True'
+            # print("addAgument: ", addAugment)
+            if addAugment == 'True':
+                # print("addAgument: ", addAugment)
                 """adding noise translation: N(mean = 0, std = 3), rotation: N(mean = 0, std = 3)"""
-                translation_dof_noise = np.random.normal(0, 3, (3))
-                rotation_dof_noise = np.random.normal(0, 1.5, (3))
+                translation_dof_noise = np.array([np.random.uniform(-10, 10), np.random.uniform(-10, 10), np.random.uniform(-5, 5)])
+                rotation_dof_noise = np.array([np.random.uniform(-5, 5), np.random.uniform(-5, 5), np.random.uniform(-10, 10)])
                 transform_dof_noise = np.concatenate((translation_dof_noise, rotation_dof_noise), axis =0)
                 # print("transform_dof_noise:{}".format(transform_dof_noise))
                 transform_noise_np = tools.dof2mat_np(transform_dof_noise) # 4 by 4 matrix
@@ -455,6 +636,21 @@ class LoadRegistrationTransformd(MapTransform):
             else:
                 """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
                 tfm_RegS2V_initial_np_to = T_scale@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
+
+
+            # if addNoise:
+            #     """adding noise translation: N(mean = 0, std = 3), rotation: N(mean = 0, std = 3)"""
+            #     translation_dof_noise = np.random.normal(0, 3, (3))
+            #     rotation_dof_noise = np.random.normal(0, 1.5, (3))
+            #     transform_dof_noise = np.concatenate((translation_dof_noise, rotation_dof_noise), axis =0)
+            #     # print("transform_dof_noise:{}".format(transform_dof_noise))
+            #     transform_noise_np = tools.dof2mat_np(transform_dof_noise) # 4 by 4 matrix
+            #     # print("transform_noise_np:{}".format(transform_noise_np))
+            #     """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
+            #     tfm_RegS2V_initial_np_to = T_scale@transform_noise_np@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
+            # else:
+            #     """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
+            #     tfm_RegS2V_initial_np_to = T_scale@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
 
 
             # """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
@@ -483,7 +679,7 @@ class LoadRegistrationTransformd(MapTransform):
             # print("mat_tensor * ini: ", tfm_gt_diff_mat_tensor_normalized @ tfm_RegS2V_initial_mat_tensor)
             # print("gt_tensor: ", tfm_RegS2V_gt_mat_tensor)
 
-           
+        
 
             # tfm_gt_diff_mat = tfm_RegS2V_gt_np_to @ np.linalg.inv(tfm_RegS2V_initial_np_to) 
             # tfm_gt_diff_mat_tensor = torch.from_numpy(tfm_gt_diff_mat)
@@ -510,8 +706,7 @@ class LoadRegistrationTransformd(MapTransform):
             data["tfm_gt_diff_dof"] = tfm_gt_diff_dof_rad_normalized # difference normlized by affine_grid
             data["tfm_RegS2V_initial_mat"] = tfm_RegS2V_initial_mat_tensor # difference normlized by affine_grid
             data["tfm_RegS2V_gt_mat"] = tfm_RegS2V_gt_mat_tensor # difference normlized by affine_grid
-
-
+            
         return data
 
 def transform_conversion_pytorch_to_ITK(affine_transform_pytorch_initial, affine_transform_pytorch_correction, volume_size):
@@ -1068,11 +1263,11 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         # print("dof_estimated: ", dof_estimated)
                         # print("dof_tensor: ", dof_tensor)
                         """rotation loss (deg)"""
-                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
-                        # rotation_loss = -100
+                        # rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
+                        rotation_loss = 0
                         """translation loss (mm)"""
-                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
-                        # translation_loss = -100
+                        # translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
+                        translation_loss = 0
                         """image intensity-based loss (localNCC)"""
                         frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
                         
@@ -1171,6 +1366,7 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         # sys.exit()
                         
                         image_localNCC_loss, ROI = loss_localNCC(frame_estimated, frame_tensor_gt_4d)
+                        # image_localNCC_loss = 0
                         # print("image_localNCC_loss: ", image_localNCC_loss)
                         # print("image_localNCC_loss device: ", image_localNCC_loss.device)
                         # coefficients for loss functinos
@@ -1178,9 +1374,9 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         alpha = 100.0
                         beta = 100.0
                         gamma = 1.0
-                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
                         # image_localNCC_loss = 0
-                        # loss_combined = image_localNCC_loss
+                        loss_combined = image_localNCC_loss
                         # loss_combined = rotation_loss + translation_loss
                         # loss_combined = alpha*rotation_loss + beta*translation_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
@@ -1199,12 +1395,12 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     running_localNCC += image_localNCC_loss*actual_batch_size
                     running_dof += (rotation_loss + translation_loss)*actual_batch_size
                     nth_batch += 1
-                    torch.cuda.empty_cache()
+                    # torch.cuda.empty_cache()
                     cur_lr = float(scheduler.get_last_lr()[0])
                     # print(scheduler.get_last_lr())
                     print('{}/{}: Train (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(loss_NCC), {:.6f}(loss_trans), {:.4f}(loss_rot)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, translation_loss, rotation_loss))
-                    print("(dof-est){}".format(torch.Tensor.numpy(dof_estimated[1,:].detach().cpu())))
-                    print("(dof-gt) {}".format(torch.Tensor.numpy(dof_tensor[1,:].detach().cpu())))
+                    print("(dof-est){}".format(torch.Tensor.numpy(dof_estimated[0,:].detach().cpu())))
+                    print("(dof-gt) {}".format(torch.Tensor.numpy(dof_tensor[0,:].detach().cpu())))
                     print("=========================================================================================================================================")
                 # sys.exit()
                 scheduler.step()
@@ -1334,8 +1530,8 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     
                     # print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.6f}(loss_translation),  {:.4f}(loss_rotation)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, translation_loss, rotation_loss))
                     print('{}/{}: Train (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(loss_NCC), {:.6f}(norm){:.6f}(non-norm)(loss_trans), {:.5f}(norm){:.5f}(non-norm)(loss_rot)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, translation_loss, translation_loss_ITK, rotation_loss, rotation_loss_ITK))
-                    print("(dof-est_ITK){}".format(torch.Tensor.numpy(dof_estimated_ITK[1,:].detach().cpu())))
-                    print("(dof-gt_ITK) {}".format(torch.Tensor.numpy(dof_gt_ITK[1,:].detach().cpu())))
+                    print("(dof-est_ITK){}".format(torch.Tensor.numpy(dof_estimated_ITK[0,:].detach().cpu())))
+                    print("(dof-gt_ITK) {}".format(torch.Tensor.numpy(dof_gt_ITK[0,:].detach().cpu())))
                     print("=========================================================================================================================================")
                 # sys.exit()
                 epoch_loss = running_loss / num_cases[phase]
@@ -1350,10 +1546,10 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     best_ep = epoch
                     print('**** best model updated with loss={:.4f} ****'.format(lowest_loss))
                 if epoch%10 == 0 and epoch != 0:
-                    fn_save = path.join(output_dir, '{}_{}_super_lr6.pth'.format(trained_model_list[str(TRAINED_MODEL)], epoch))
+                    fn_save = path.join(output_dir, '{}_{}_unsuper_lr7_b1_nondrop_refine.pth'.format(trained_model_list[str(TRAINED_MODEL)], epoch))
                     torch.save(model.state_dict(), fn_save)
                 
-                torch.cuda.empty_cache()    
+                # torch.cuda.empty_cache()    
         # sys.exit()    
         # update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss, loss_combined = tv_hist['train'][-1][0], loss_image = tv_hist['train'][-1][1], loss_dof = tv_hist['train'][-1][2])
         update_info(best_epoch=best_ep+1, current_epoch=epoch+1, lowest_val_TRE=lowest_loss, tv_hist=tv_hist)
@@ -1706,7 +1902,7 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
     return tv_hist
 
 
-def train_nondeep_model(dataset_frame, dataset_volume, frame_index):
+def train_nondeep_model(dataset_frame, dataset_volume, frame_index, visualize = False):
     
     """Pre-setting (same as ITK global one)"""
     lr_localNCC = 0.001
@@ -1722,15 +1918,16 @@ def train_nondeep_model(dataset_frame, dataset_volume, frame_index):
     
     loss_mse = nn.MSELoss()
     # loss_localNCC = LocalNormalizedCrossCorrelationLoss(spatial_dims=2, kernel_size= 13, kernel_type="rectangular", reduction="mean")
-    loss_localNCC = loss_F.LocalNCC(device = device, kernel_size =(71, 71), stride=(1, 1), padding="valid", win_eps= 100)
-    
+    kernel_size = 51
+    loss_localNCC = loss_F.LocalNCC_new(device = device, kernel_size =(kernel_size, kernel_size), stride=(2, 2), padding="valid", win_eps= 0.98)
+    runtime_total = []
     starting = time.time()
     """initialize rotation and transaltion vector"""
     rtvec_est = torch.zeros((1, 6), requires_grad = True, device = device)
     # print("rtvec_est is leaf_variable (guess True): ", rtvec_est.is_leaf)
     
     rtvec_gt = dataset_frame[frame_index]["tfm_gt_diff_dof"].type(torch.FloatTensor)
-    rtvec_gt = rtvec_gt.unsqueeze(0).type(torch.FloatTensor)
+    # rtvec_gt = rtvec_gt.unsqueeze(0).type(torch.FloatTensor)
     rtvec_gt = rtvec_gt.to(device)
     # print("rtvec_gt shape:{}".format(rtvec_gt.shape))
     # print("rtvec_gt: {}".format(rtvec_gt))
@@ -1745,18 +1942,19 @@ def train_nondeep_model(dataset_frame, dataset_volume, frame_index):
     lossLocalNCC_output_list = torch.zeros(1, device=device)
     lossRot_output_list = torch.zeros(1, device = device)
     lossTrans_output_list = torch.zeros(1, device = device)
-    
+    if visualize:
+        fig = plt.figure(figsize=(15, 9))
     for iter in range(num_iters):
 
         optimizer_nondeep_model.zero_grad()
 
         """loading frame"""
-        frame_tensor = torch.permute(dataset_frame[frame_index]["frame_name"].type(torch.FloatTensor), (0, 3, 2, 1)).to(device)
+        frame_tensor = torch.permute(dataset_frame[frame_index]["frame_name"].type(torch.FloatTensor), (0, 3, 2, 1))
         frame_flip_flag = dataset_frame[frame_index]["frame_flip_flag"]
         if frame_flip_flag == "True":
             frame_tensor = torch.flip(frame_tensor, [3])
         frame_tensor = frame_tensor.type(torch.FloatTensor)
-        
+        frame_tensor = frame_tensor.to(device)
         """get transformation"""
         correction_transform = tools.dof2mat_tensor(input_dof=rtvec_est).type(torch.FloatTensor).to(device)
         affine_transform_combined = torch.matmul(correction_transform, affine_transform_initial)
@@ -1768,8 +1966,8 @@ def train_nondeep_model(dataset_frame, dataset_volume, frame_index):
         """get resampled volume and frame"""
         vol_resampled = F.grid_sample(volume, grid_affine, align_corners=True)
         # resampled_image_initial_np = torch.Tensor.numpy(vol_resampled)
-        sampled_frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
-        
+        sampled_frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :]
+        sampled_frame_estimated = sampled_frame_estimated.to(device)
         """rotation loss (deg)"""
         rotation_loss = loss_mse(rtvec_est[:, 3:], rtvec_gt[:, 3:])
         """translation loss (mm)"""
@@ -1806,6 +2004,7 @@ def train_nondeep_model(dataset_frame, dataset_volume, frame_index):
             
     end = time.time()
     time_elapsed = end - starting
+    runtime_total.append(time_elapsed)
     print('*' * 10 + 'Training complete in {:.2f}s'.format(time_elapsed) + '*' * 10)
     
     lossLocalNCC_output_list_np = torch.Tensor.numpy(lossLocalNCC_output_list.detach().cpu())
@@ -1825,9 +2024,11 @@ def train_nondeep_model(dataset_frame, dataset_volume, frame_index):
     # resampled_image_initial_np = torch.Tensor.numpy(vol_resampled)
     sampled_frame_gt = vol_resampled_gt[:,:, int(volume_size[3]*0.5), :, :]
     sampled_frame_gt_np = torch.Tensor.numpy(sampled_frame_gt.detach().cpu())
-    # fig = plt.figure(figsize=(15, 9))
-    # util_plot.plot_nondeep_model_comb(fig, lossLocalNCC_output_list_np, lossRot_output_list_np, lossTrans_output_list_np, initial_sampled_frame_est_np, sampled_frame_estimated_np, frame_gt_np)
-    # util_plot.plot_nondeep_model_comb_with_ITK(fig, lossLocalNCC_output_list_np, lossRot_output_list_np, lossTrans_output_list_np, initial_sampled_frame_est_np, sampled_frame_estimated_np, frame_gt_np, sampled_frame_gt_np)
+    
+    if visualize:
+        # util_plot.plot_nondeep_model_comb(fig, lossLocalNCC_output_list_np, lossRot_output_list_np, lossTrans_output_list_np, initial_sampled_frame_est_np, sampled_frame_estimated_np, frame_gt_np)
+        util_plot.plot_nondeep_model_comb_with_ITK(fig, lossLocalNCC_output_list_np, lossRot_output_list_np, lossTrans_output_list_np, initial_sampled_frame_est_np, sampled_frame_estimated_np, frame_gt_np, sampled_frame_gt_np)
+    return runtime_total
 
 
 if __name__ == '__main__':
@@ -1836,7 +2037,8 @@ if __name__ == '__main__':
     
     # project_dir = 'E:\PROGRAM\Project_PhD\Registration\DeepRegS2V'
     project_dir = os.getcwd() # Note: direct to the project folder
-    data_tree_file = os.path.join(project_dir, "src/dataset_index.xml")
+    data_tree_file = os.path.join(project_dir, "src/dataset_index_augment.xml")
+    # data_tree_file = os.path.join(project_dir, "src/dataset_index_test.xml") 
     if platform.system() == 'Linux':
         data_tree_file = '/'.join(data_tree_file.split('\\'))
     data_tree = ET.parse(data_tree_file)
@@ -1846,9 +2048,11 @@ if __name__ == '__main__':
     validation_cases_metadata = root.find("validation_cases")
 
     # alldataset_dict, volume_dict = CreateLookupTable(all_cases_metadata, save_flag=True)
-    training_dataset_dict, training_volume_dict = CreateLookupTable(training_cases_metadata,project_dir= project_dir, phase= "train", save_flag=True)
-    validation_dataset_dict, validation_volume_dict = CreateLookupTable(validation_cases_metadata, project_dir= project_dir, phase= "val", save_flag=True)
-    
+    # training_dataset_dict, training_volume_dict = CreateLookupTable(training_cases_metadata,project_dir= project_dir, phase= "train", save_flag=True)
+    # validation_dataset_dict, validation_volume_dict = CreateLookupTable(validation_cases_metadata, project_dir= project_dir, phase= "val", save_flag=True)
+    training_dataset_dict, training_volume_dict = CreateLookupTable_new(training_cases_metadata,project_dir= project_dir, phase= "train", save_flag=True, augmented=True)
+    validation_dataset_dict, validation_volume_dict = CreateLookupTable_new(validation_cases_metadata, project_dir= project_dir, phase= "val", save_flag=True, augmented=False)
+
     """preprocessing the dataset(volume data, 2D US frame data and transformation data)"""
     # """preprocessing: setting 1"""
     # resample_spacing = 0.5
@@ -1933,11 +2137,19 @@ if __name__ == '__main__':
         if TRAINED_MODEL == 4:
             model = RegS2Vnet.RegS2Vnet_featurefusion_simplified().to(device=device)
             if RESUME_MODEL:
-                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_unsupervised_1/", 'DeepS2VFF_simplified_490_weak_super.pth') # 
+                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_2", 'DeepS2VFF_simplified_360_unsuper_lr6.pth') # 
                 model.load_state_dict(torch.load(pretrained_model, map_location=device))
                 print("RESUME model: {}".format(pretrained_model))
             tv_hist = train_model_initialized(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
-
+        
+        if TRAINED_MODEL == 5:
+            model = RegS2Vnet.RegS2Vnet_featurefusion_simplified_nondrop().to(device=device)
+            if RESUME_MODEL:
+                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_nondrop", 'DeepS2VFF_simplified_nodrop_60_unsuper_lr7_b1_nondrop_refine.pth') # 
+                model.load_state_dict(torch.load(pretrained_model, map_location=device))
+                print("RESUME model: {}".format(pretrained_model))
+            tv_hist = train_model_initialized(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
+        
         json_obj = json.dumps(tv_hist)
         f = open(os.path.join(output_dir, 'results_'+'{}.json'.format(now_str)), 'w')
         # write json object to file
@@ -1946,5 +2158,11 @@ if __name__ == '__main__':
         f.close()
 
     if NONDEEP_MODEL:
-        frame_index = 6
-        train_nondeep_model(training_dataset_2DUS, training_dataset_3DUS, frame_index)
+        # frame_index = 6
+        runtime_total =[] 
+        for frame_index in range(len(training_dataset_2DUS)):
+            runtime = train_nondeep_model(training_dataset_2DUS, training_dataset_3DUS, frame_index)
+            runtime_total.append(runtime)
+        runtime_mean = np.mean(runtime_total)
+        runtime_std = np.std(runtime_total)
+        print("runtime (mean+std): {}s + {}s".format(runtime_mean, runtime_std))

@@ -26,11 +26,12 @@
   
   <training_cases category="directory">
 	<case_000>LHV\LHV-06\pre06_sweep02\LHV06_pre06_sweep02.xml</case_000>
-	<case_001>LHV\LHV-03\pre04_sweep04\LHV03_pre04_sweep04.xml</case_001>
+	<!-- <case_001>LHV\LHV-03\pre04_sweep04\LHV03_pre04_sweep04.xml</case_001> -->
   </training_cases>
   
   <validation_cases category="directory">
-	<case_000>LHV\LHV-03\pre01_sweep04\LHV03_pre01_sweep04.xml</case_000>
+	<case_000>LHV\LHV-05\pre02_sweep03\LHV05_pre02_sweep03.xml</case_000>
+	<!-- <case_000>LHV\LHV-03\pre01_sweep04\LHV03_pre01_sweep04.xml</case_000> -->
   </validation_cases>
   <test_cases category="directory">
   </test_cases>
