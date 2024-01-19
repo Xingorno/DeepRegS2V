@@ -1059,6 +1059,187 @@ class RegS2Vnet_featurefusion_simplified_nondrop(nn.Module):
             
         return vol_resampled, x
 
+class RegS2Vnet_featurefusion_simplified_adddrop(nn.Module):
+    def __init__(self):
+        self.inplanes = 1
+        super(RegS2Vnet_featurefusion_simplified_adddrop, self).__init__()
+        """ Balance """
+        # print("layers", layers)
+        
+        self.frame_encoder = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck2d(16, 16),
+            nn.MaxPool2d(4),
+            nn.Dropout2d(0.5),
+            nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck2d(32, 32),
+            nn.MaxPool2d(4),
+            nn.Dropout2d(0.5),
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck2d(64, 64),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.5),
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck2d(128, 128),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.5),
+            nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(inplace=True),
+            
+        )
+        self.frame_flatten = nn.Flatten(1, 3)
+        self.volume_encoder = nn.Sequential(
+            nn.Conv3d(1, 16, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck3d(16, 16),
+            nn.MaxPool3d((2, 4, 4)),
+            nn.Dropout3d(0.5),
+            nn.Conv3d(16, 32, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck3d(32, 32),
+            nn.MaxPool3d((2, 4, 4)),
+            nn.Dropout3d(0.5),
+            nn.Conv3d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck3d(64, 64),
+            nn.MaxPool3d((2, 2, 2)),
+            nn.Dropout3d(0.5),
+            nn.Conv3d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck3d(128, 128),
+            nn.MaxPool3d((2, 2, 2)),
+            nn.Dropout3d(0.5),
+            nn.Conv3d(128, 64, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(inplace=True),
+
+            # nn.Flatten(3,4)
+        )
+        self.vol_flatten = nn.Flatten(2, 4)
+
+        self.decoder = nn.Sequential(
+            nn.Conv3d(1, 16, kernel_size=3, stride=1, padding='same'),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck3d(16, 16),
+            nn.MaxPool3d((1, 4, 4)),
+            nn.Dropout3d(0.5),
+            nn.Conv3d(16, 32, kernel_size=3, stride=1, padding='same'),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck3d(32, 32),
+            nn.MaxPool3d((1, 4, 4)),
+            nn.Dropout3d(0.5),
+            nn.Conv3d(32, 64, kernel_size=3, stride=1, padding='same'),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck3d(64, 64),
+            nn.MaxPool3d((1, 3, 3)),
+            nn.Dropout3d(0.5),
+            nn.Conv3d(64, 128, kernel_size=3, stride=1, padding='same'),
+            nn.LeakyReLU(inplace=True),
+            ResNetBottleneck3d(128, 128),
+            # nn.MaxPool3d((1, 3, 3)),
+            # nn.Conv3d(256, 256, kernel_size=3, stride=1, padding=1),
+            # nn.ReLU(),
+            # ResNetBottleneck3d(256, 256),
+            nn.AvgPool3d((3, 3, 3))
+        )
+        self.relu = nn.LeakyReLU(inplace=True)
+        self.dropout = nn.Dropout1d(0.5)
+        self.fc0 = nn.Linear(1024, 256)
+        self.fc1 = nn.Linear(256, 64)
+        self.fc2 = nn.Linear(64, 6)
+        self.tanh = nn.Tanh()
+
+
+    def forward(self, vol, frame, initial_transform, vol_original, device=None):
+        input_vol = vol.clone()
+        show_size = True
+        if show_size:
+            # vol = self.volBranch(vol)
+            # frame = self.frameBranch(frame)
+            # print('\n********* Frame encoder*********')
+            # print('frame {}'.format(frame[0,0,0, 100:102, 100:102]))
+            frame = frame.squeeze(1)
+            # print('squeeze {}'.format(frame.shape))
+            frame = self.frame_encoder(frame)
+            # print('frame {}'.format(frame.shape))
+            # print("frame encoder output: ", frame)
+            # print('\n********* Vol *********')
+            # print('vol {}'.format(vol[0, 0, 0, 100:102, 100:102]))
+            vol = self.volume_encoder(vol)
+            # print('vol {}'.format(vol.shape))
+            # print("volume encoder output: ", vol)            
+            # """ combining the frame features and volume features"""
+            # frame: batch_size X channel x h_feature x w_feature
+            # vol: batch_size x channel x d_feature x h_feature x w_feature
+
+            frame = self.frame_flatten(frame)
+            # print('frame {}'.format(frame.shape))
+            vol = torch.permute(vol, (0, 2, 1, 3, 4))
+            # print('vol permuted shape {}'.format(vol.shape))
+            
+            vol = self.vol_flatten(vol)
+            # print('vol shape {}'.format(vol.shape))
+
+            x = torch.einsum('ijk, il->ijkl', vol, frame)
+            # print('vol_combined_feature shape {}'.format(x.shape))
+            x = x.unsqueeze(1)
+            # print('vol_combined_feature {}'.format(x.shape))
+            
+            
+            """ResNet to docoding"""
+            x = self.decoder(x)
+            # print('output x {}'.format(x))
+
+            x = x.view(x.size(0), -1)
+            x = x.unsqueeze(1)
+            # print('view {}'.format(x.shape))
+            # sys.exit()
+            # x = self.dropout(x)
+            x = self.fc0(x)
+            # print('fc0 {}'.format(x))
+            x = self.relu(x)
+            # x = self.dropout(x)
+
+            x = self.fc1(x)
+            # print('fc1 {}'.format(x))
+            x = self.relu(x)
+            # x = self.dropout(x)
+            x = self.fc2(x)
+            x = self.tanh(x)
+            # print('fc2 {}'.format(x.shape))
+            # sys.exit()
+            """ add the correction transformation"""
+            # print('output x {}'.format(x.shape))
+            """normalized output [trans_x, trans_y, trans_z, rad_rotx, rad_roty, rad_rotz]"""
+            x = x.squeeze(1) 
+            # x_ = torch.zeros(1, 6)
+            # non-normalized transformation
+
+            correction_transform = tools.dof2mat_tensor_normalized(input_dof=x).type(torch.FloatTensor)
+            correction_transform = correction_transform.to(device)
+
+            initial_transform = initial_transform.to(device)
+            # correction_transform = tools.dof2mat_tensor_normalized(input_dof=correction).type(torch.FloatTensor)
+            # correction_transform = correction_transform.to(device)
+            
+            # volume_size = [input_vol.shape[4], input_vol.shape[3], input_vol.shape[2]]
+            # # calcuate normalized transform
+            # correction_transform_torch = transform_conversion_ITK_torch_to_pytorch(correction_transform, volume_size= volume_size, device=device) # normlized to STN format
+            final_trans = correction_transform @ initial_transform
+            grid_affine = F.affine_grid(theta= final_trans[:, 0:3, :], size = input_vol.shape, align_corners=True)
+            vol_resampled = F.grid_sample(vol_original, grid_affine, align_corners=True)
+            
+            """Note: using this way cannot acheive same results as the correction @ initial_transform (guessing the affine cannot be accumulated on standard grid)"""
+            # grid_affine = F.affine_grid(theta= correction_transform[:, 0:3, :], size = input_vol.shape, align_corners=True)
+            # vol_resampled = F.grid_sample(input_vol, grid_affine, align_corners=True)
+
+            # sys.exit()
+            
+        return vol_resampled, x
+
 
 class DeepF2F(nn.Module):
     """Frame-to-frame registration network"""

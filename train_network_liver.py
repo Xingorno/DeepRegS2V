@@ -88,7 +88,7 @@ parser.add_argument('-e', '--epochs',
 parser.add_argument('-b', '--batch_size',
                     type=int,
                     help='number of batch size',
-                    default=1)
+                    default=2)
 
 parser.add_argument('-n', '--network_type',
                     type=str,
@@ -115,7 +115,7 @@ batch_size = args.batch_size
 num_epochs = args.epochs
 
 project_dir = os.getcwd()
-output_dir = os.path.join(project_dir, "src/outputs_DeepS2VFF_simplified_nondrop")
+output_dir = os.path.join(project_dir, "src/outputs_DeepS2VFF_simplified_nondrop_continue")
 isExist = os.path.exists(output_dir)
 if not isExist:
     os.makedirs(output_dir)
@@ -124,10 +124,9 @@ DEEP_MODEL = True
 NONDEEP_MODEL = False
 RESUME_MODEL = True
 TRAINED_MODEL = 5
-trained_model_list = {'1': 'FVnet-supervised', '2': 'DeepS2VFF', '3':'DeepRCS2V', '4':"DeepS2VFF_simplified", '5':"DeepS2VFF_simplified_nodrop" }
+trained_model_list = {'1': 'FVnet-supervised', '2': 'DeepS2VFF', '3':'DeepRCS2V', '4':"DeepS2VFF_simplified", '5':"DeepS2VFF_simplified_nodrop", '6':"DeepS2VFF_simplified_adddrop"}
 # net = 'DeepS2VFF_refine_leakyReLU_localNCC'
 net = 'DeepS2VFF_simplified_nondrop'
-
 addNoise = True
 
 print('start device {}'.format(device))
@@ -385,7 +384,7 @@ def CreateLookupTable(cases_metadata, project_dir, phase = 'train', save_flag = 
         # print(dom.toprettyxml())
     return alldataset_LUT, volume_LUT
 
-def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_flag = True, augmented = True):
+def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_flag = True, augmented = True, create_augment_data=False):
 
     project_src_dir = os.path.join(project_dir, "src")
     project_data_dir = os.path.join(project_dir, "data")
@@ -465,7 +464,10 @@ def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_fla
         # get the transform metadata (slice to volume registration)
         tfm_RegS2V_metadata = case_root.find('slice_to_volume_registration')
         if augmented:
-            step = 2
+            if create_augment_data:
+                step = 1 # when not loading data, this is for creating the dataset
+            else:
+                step = 2 # this number may change
         else:
             step = 1
         for frame_index in range(rangeMin, rangeMax + 1, step): # add step
@@ -562,11 +564,14 @@ def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_fla
     return alldataset_LUT, volume_LUT
 
 class LoadRegistrationTransformd(MapTransform):
-    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False, scale = 1, volume_size = None) -> None:
+    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False, scale = 1, volume_size = None, loading_data = False, step_size = 2) -> None:
         super().__init__(keys, allow_missing_keys)
         self.keys = keys
         self.scale = scale
         self.volume_size = volume_size #"W*H*D"
+        self.loading_data = loading_data
+        self.step_size = step_size
+        
     def __call__(self, data):
         """Keys tfm_3DUS_CT_fileNAME: ["tfm_3DUS_CT_fileNAME", "tfm_RegS2V_initial_fileNAME", "tfm_RegS2V_correction_fileNAME", "tfm_RegS2V_correction_fileNAME_pre"]""" 
         for key in self.keys:
@@ -624,11 +629,25 @@ class LoadRegistrationTransformd(MapTransform):
             # print("addAgument: ", addAugment)
             if addAugment == 'True':
                 # print("addAgument: ", addAugment)
-                """adding noise translation: N(mean = 0, std = 3), rotation: N(mean = 0, std = 3)"""
-                translation_dof_noise = np.array([np.random.uniform(-10, 10), np.random.uniform(-10, 10), np.random.uniform(-5, 5)])
-                rotation_dof_noise = np.array([np.random.uniform(-5, 5), np.random.uniform(-5, 5), np.random.uniform(-10, 10)])
-                transform_dof_noise = np.concatenate((translation_dof_noise, rotation_dof_noise), axis =0)
+                global augmentation_dof_data
+                global loading_data_index
+                if self.loading_data:
+                    # print("frame_name: ", data[key][3])
+                    transform_dof_noise = augmentation_dof_data[loading_data_index]
+                    loading_data_index = loading_data_index+ self.step_size
+                else:
+                    """adding noise translation: N(mean = 0, std = 3), rotation: N(mean = 0, std = 3)"""
+                    translation_dof_noise = np.array([np.random.uniform(-10, 10), np.random.uniform(-10, 10), np.random.uniform(-5, 5)])
+                    rotation_dof_noise = np.array([np.random.uniform(-5, 5), np.random.uniform(-5, 5), np.random.uniform(-10, 10)])
+                    transform_dof_noise = np.concatenate((translation_dof_noise, rotation_dof_noise), axis =0)
+                    transform_dof_noise = np.expand_dims(transform_dof_noise, axis=0)
+                    
+                    augmentation_dof_data = np.append(augmentation_dof_data, transform_dof_noise, axis=0)
+                    transform_dof_noise = np.squeeze(transform_dof_noise, axis = 0)
+
+                # print("transform_dof_noise:{}".format(transform_dof_noise.shape))
                 # print("transform_dof_noise:{}".format(transform_dof_noise))
+                # print("augmentation_dof_data: {}".format(augmentation_dof_data))
                 transform_noise_np = tools.dof2mat_np(transform_dof_noise) # 4 by 4 matrix
                 # print("transform_noise_np:{}".format(transform_noise_np))
                 """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
@@ -1263,11 +1282,11 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         # print("dof_estimated: ", dof_estimated)
                         # print("dof_tensor: ", dof_tensor)
                         """rotation loss (deg)"""
-                        # rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
-                        rotation_loss = 0
+                        rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
+                        # rotation_loss = 0
                         """translation loss (mm)"""
-                        # translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
-                        translation_loss = 0
+                        translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
+                        # translation_loss = 0
                         """image intensity-based loss (localNCC)"""
                         frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
                         
@@ -1371,12 +1390,12 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         # print("image_localNCC_loss device: ", image_localNCC_loss.device)
                         # coefficients for loss functinos
                         
-                        alpha = 100.0
-                        beta = 100.0
-                        gamma = 1.0
-                        # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        alpha = 0.99
+                        beta = 0.99
+                        gamma = 0.01
+                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
                         # image_localNCC_loss = 0
-                        loss_combined = image_localNCC_loss
+                        # loss_combined = image_localNCC_loss
                         # loss_combined = rotation_loss + translation_loss
                         # loss_combined = alpha*rotation_loss + beta*translation_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
@@ -1510,8 +1529,8 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                         image_localNCC_loss, ROI = loss_localNCC(frame_estimated, frame_tensor_gt_4d)
                         
                         # coefficients for loss functinos
-                        alpha = 100.0
-                        beta = 100.0
+                        alpha = 99.0
+                        beta = 99.0
                         gamma = 1.0
                         loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
                         # loss_combined = image_localNCC_loss
@@ -1546,7 +1565,7 @@ def train_model_initialized(model, training_dataset_frame, training_dataset_volu
                     best_ep = epoch
                     print('**** best model updated with loss={:.4f} ****'.format(lowest_loss))
                 if epoch%10 == 0 and epoch != 0:
-                    fn_save = path.join(output_dir, '{}_{}_unsuper_lr7_b1_nondrop_refine.pth'.format(trained_model_list[str(TRAINED_MODEL)], epoch))
+                    fn_save = path.join(output_dir, '{}_{}_bs2_weaksuper.pth'.format(trained_model_list[str(TRAINED_MODEL)], epoch))
                     torch.save(model.state_dict(), fn_save)
                 
                 # torch.cuda.empty_cache()    
@@ -2047,11 +2066,21 @@ if __name__ == '__main__':
     training_cases_metadata = root.find("training_cases")
     validation_cases_metadata = root.find("validation_cases")
 
+
+    loading_data = True
+    if loading_data:
+        augmentation_dof_data = np.load("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_nondrop_continue/augmentation_dof_data.npy")
+        loading_data_index = 0
+    else:
+        augmentation_dof_data = np.zeros([1, 6]) # global variable
+
     # alldataset_dict, volume_dict = CreateLookupTable(all_cases_metadata, save_flag=True)
     # training_dataset_dict, training_volume_dict = CreateLookupTable(training_cases_metadata,project_dir= project_dir, phase= "train", save_flag=True)
     # validation_dataset_dict, validation_volume_dict = CreateLookupTable(validation_cases_metadata, project_dir= project_dir, phase= "val", save_flag=True)
-    training_dataset_dict, training_volume_dict = CreateLookupTable_new(training_cases_metadata,project_dir= project_dir, phase= "train", save_flag=True, augmented=True)
-    validation_dataset_dict, validation_volume_dict = CreateLookupTable_new(validation_cases_metadata, project_dir= project_dir, phase= "val", save_flag=True, augmented=False)
+    training_dataset_dict, training_volume_dict = CreateLookupTable_new(training_cases_metadata,project_dir= project_dir, phase= "train", save_flag=True, augmented=True, create_augment_data=False)
+    validation_dataset_dict, validation_volume_dict = CreateLookupTable_new(validation_cases_metadata, project_dir= project_dir, phase= "val", save_flag=True, augmented=False, create_augment_data=False)
+
+    
 
     """preprocessing the dataset(volume data, 2D US frame data and transformation data)"""
     # """preprocessing: setting 1"""
@@ -2079,9 +2108,11 @@ if __name__ == '__main__':
         ]
     )
     # prepocess the 2D US and registration transformation data
+    
+
     transform_2DUS = Compose(
         [
-            LoadRegistrationTransformd(keys=["tfm_RegS2V"], scale=resize_scale, volume_size=volume_size),
+            LoadRegistrationTransformd(keys=["tfm_RegS2V"], scale=resize_scale, volume_size=volume_size, loading_data=loading_data, step_size=2), # step_size only consider when loading data
             LoadImaged(keys=["frame_name", "frame_mask_name"], reader=ITKReader(reverse_indexing=False, affine_lps_to_ras=False), image_only=False),
             # MaskIntensityd(keys=["image","image_mask"], mask_data= mask_image_array),
             MaskIntensityd(keys=["frame_name", "frame_mask_name"], mask_key= "frame_mask_name"),
@@ -2092,6 +2123,8 @@ if __name__ == '__main__':
             ScaleIntensityd(keys=["frame_name", "frame_mask_name"], minv= 0.0, maxv = 1.0, dtype= np.float32)
         ]
     )
+
+    # save_data()
     
 
     training_dataset_3DUS = CacheDataset(data=training_volume_dict, transform=transform_3DUS)
@@ -2099,6 +2132,13 @@ if __name__ == '__main__':
     
     validation_dataset_3DUS = CacheDataset(data=validation_volume_dict, transform=transform_3DUS)
     validation_dataset_2DUS = CacheDataset(data=validation_dataset_dict, transform=transform_2DUS)
+    
+    if not loading_data:
+        print("augmentation_dof_data: {}".format(augmentation_dof_data))
+        augmentation_dof_data = np.delete(augmentation_dof_data, (0), axis=0)
+        
+        np.save(os.path.join(output_dir, 'augmentation_dof_data'), augmentation_dof_data) 
+
     
 
     if DEEP_MODEL:
@@ -2144,12 +2184,25 @@ if __name__ == '__main__':
         
         if TRAINED_MODEL == 5:
             model = RegS2Vnet.RegS2Vnet_featurefusion_simplified_nondrop().to(device=device)
+            
             if RESUME_MODEL:
-                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_nondrop", 'DeepS2VFF_simplified_nodrop_60_unsuper_lr7_b1_nondrop_refine.pth') # 
+                """from supervise dof -> unsupervise by NCC -> add batch_size =2, supervise by 0.99*dof + 0.01*NCC"""
+                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_nondrop", 'DeepS2VFF_simplified_nodrop_400_unsuper_lr7_b1_nondrop_refine_resume.pth') # 
+                # pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_nondrop", 'DeepS2VFF_simplified_nodrop_400_unsuper_lr7_b1_nondrop_refine.pth') # 
                 model.load_state_dict(torch.load(pretrained_model, map_location=device))
                 print("RESUME model: {}".format(pretrained_model))
             tv_hist = train_model_initialized(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
         
+        if TRAINED_MODEL == 6:
+            # model = RegS2Vnet.RegS2Vnet_featurefusion_simplified_nondrop().to(device=device)
+            model = RegS2Vnet.RegS2Vnet_featurefusion_simplified_adddrop().to(device=device)
+            if RESUME_MODEL:
+                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_nondrop", 'DeepS2VFF_simplified_nodrop_400_unsuper_lr7_b1_nondrop_refine_resume.pth') # 
+                model.load_state_dict(torch.load(pretrained_model, map_location=device))
+                print("RESUME model: {}".format(pretrained_model))
+            tv_hist = train_model_initialized(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
+        
+
         json_obj = json.dumps(tv_hist)
         f = open(os.path.join(output_dir, 'results_'+'{}.json'.format(now_str)), 'w')
         # write json object to file
