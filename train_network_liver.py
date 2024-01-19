@@ -1612,11 +1612,12 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
         trainable_params += list(submodel.parameters())
     trainable_params += list(model.spatial_transformer.parameters())
 
-    # optimizer = optim.Adam(model.parameters(), lr=lr)
-    # scheduler = lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.8)
-    optimizer = optim.SGD(trainable_params, lr=lr, momentum=0.9)
+    optimizer = optim.Adam(trainable_params, lr=lr)
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=80, gamma=0.8)
+
+    # optimizer = optim.SGD(trainable_params, lr=lr, momentum=0.9)
     # optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
-    scheduler = lr_scheduler.CyclicLR(optimizer, base_lr=1e-6, max_lr=1e-4,step_size_up=100)
+    # scheduler = lr_scheduler.CyclicLR(optimizer, base_lr=1e-6, max_lr=1e-4,step_size_up=100)
     # scheduler = lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=20)
     # now_str = '150nonorm'
     
@@ -1653,7 +1654,7 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
                     frame_tensor = torch.permute(batch["frame_name"].type(torch.FloatTensor), (0, 1, 4, 3, 2))
                     # mat_tensor = batch["tfm_gt_diff_mat"].type(torch.FloatTensor)
                     dof_tensor = batch["tfm_gt_diff_dof"].type(torch.FloatTensor)
-                    
+                    dof_tensor = dof_tensor.squeeze(1)
                     # print('vol_tensor {}'.format(vol_tensor.shape))
                     # print('frame_tensor {}'.format(frame_tensor.shape))
                     # print('mat_tensor {}'.format(mat_tensor.shape))
@@ -1695,12 +1696,15 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
                         # print('delta_mat_accumulate_list: {}'.format(delta_mat_accumulate_list))
                         # print('delta_mat_accumulate_list[-1]: {}'.format(delta_mat_accumulate_list[-1]))
                         # sys.exit()
-                        dof_estimated = tools.mat2dof_tensor(delta_mat_accumulate_list[-1]) # non-normalized
+
+                        dof_estimated = tools.mat2dof_tensor(delta_mat_accumulate_list[-1], 'rad') 
                         dof_estimated = dof_estimated.to(device)
-                        """rotation loss (deg)"""
+                        # """rotation loss (deg)"""
                         rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
-                        """translation loss (mm)"""
+                        # rotation_loss = 0
+                        # """translation loss (mm)"""
                         translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
+                        # translation_loss = 0
 
                         """image intensity-based loss (localNCC)"""
                         frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :]
@@ -1746,9 +1750,9 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
                         # print("image_localNCC_loss device: ", image_localNCC_loss.device)
                         # coefficients for loss functinos
                         
-                        alpha = 1.0
-                        beta = 1.0
-                        gamma = 20.0
+                        alpha = 0.99
+                        beta = 0.99
+                        gamma = 0.01
                         loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
                         # loss_combined = image_localNCC_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
@@ -1770,8 +1774,10 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
                     torch.cuda.empty_cache()
                     cur_lr = float(scheduler.get_last_lr()[0])
                     # print(scheduler.get_last_lr())
-                    # print('{}/{}: Train-BATCH (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
-                    print('{}/{}: Train-BATCH (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.6f}(loss_translation), {:.4f}(loss_rotation)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, translation_loss, rotation_loss))
+                    print('{}/{}: Train (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(loss_NCC), {:.6f}(loss_trans), {:.4f}(loss_rot)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined, image_localNCC_loss, translation_loss, rotation_loss))
+                    print("(dof-est){}".format(torch.Tensor.numpy(dof_estimated[0,:].detach().cpu())))
+                    print("(dof-gt) {}".format(torch.Tensor.numpy(dof_tensor[0,:].detach().cpu())))
+                    print("=========================================================================================================================================")
                 scheduler.step()
                 # sys.exit()
                 epoch_loss = running_loss / num_cases[phase]
@@ -1797,7 +1803,7 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
                     frame_tensor = torch.permute(batch["frame_name"].type(torch.FloatTensor), (0, 1, 4, 3, 2))
                     # mat_tensor = batch["tfm_gt_diff_mat"].type(torch.FloatTensor)
                     dof_tensor = batch["tfm_gt_diff_dof"].type(torch.FloatTensor)
-                    
+                    dof_tensor = dof_tensor.squeeze(1)
 
                     vol_tensor = vol_tensor.to(device)
                     frame_tensor = frame_tensor.to(device)
@@ -1825,17 +1831,22 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
                         frame_tensor_gt_4d = frame_tensor_gt.squeeze(2)
                         vol_resampled, theta_list, delta_mat_accumulate_list = model(vol=vol_tensor, img_fixed=frame_tensor_gt_4d, initial_transform = affine_transform_initial) # shape batch_size*6
                         
+                        vol_size = [vol_tensor.shape[4], vol_tensor.shape[3], vol_tensor.shape[2]]
+                        dof_estimated_ITK = transform_conversion_dof_normalized_to_ITK(dof_normalized=dof_estimated, vol_size = vol_size, device=device)
+                        dof_gt_ITK = transform_conversion_dof_normalized_to_ITK(dof_normalized=dof_tensor, vol_size = vol_size, device=device)
+
                         # sys.exit()
                         # cascaded_transform = calculate_cascaded_transform(theta_list, device)
 
-                        dof_estimated = tools.mat2dof_tensor(delta_mat_accumulate_list[-1])
+                        dof_estimated = tools.mat2dof_tensor(delta_mat_accumulate_list[-1], 'rad')
                         dof_estimated = dof_estimated.to(device)
 
                         """rotation loss (deg)"""
                         rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
+                        rotation_loss_ITK = loss_mse(dof_estimated_ITK[:, 3:], dof_gt_ITK[:, 3:])
                         """translation loss (mm)"""
                         translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
-
+                        translation_loss_ITK = loss_mse(dof_estimated_ITK[:, :3], dof_gt_ITK[:, :3])
                         """image intensity-based loss (localNCC)"""
                         frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :]
 
@@ -1866,11 +1877,11 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
                         image_localNCC_loss, ROI = loss_localNCC(frame_estimated, frame_tensor_gt_4d)
                         
                         # coefficients for loss functinos
-                        # alpha = 1.0
-                        # beta = 2.0
-                        # gamma = 10.0
-                        # loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
-                        loss_combined = image_localNCC_loss
+                        alpha = 0.99
+                        beta = 0.99
+                        gamma = 0.01
+                        loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+                        # loss_combined = image_localNCC_loss
                         # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
                         # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
                         # print("loss_combined device (guess cuda): ", loss_combined.device)
@@ -1885,7 +1896,10 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
                     nth_batch += 1
                     
                     # print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.4f}(loss_dof)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, rotation_loss+translation_loss))
-                    print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.6f}(loss_translation),  {:.4f}(loss_rotation)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, translation_loss, rotation_loss))
+                    print('{}/{}: Validation : {:.4f}(loss_combined), {:.4f}(loss_NCC), {:.6f}(norm){:.6f}(non-norm)(loss_trans), {:.5f}(norm){:.5f}(non-norm)(loss_rot)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, translation_loss, translation_loss_ITK, rotation_loss, rotation_loss_ITK))
+                    print("(dof-est_ITK){}".format(torch.Tensor.numpy(dof_estimated_ITK[0,:].detach().cpu())))
+                    print("(dof-gt_ITK) {}".format(torch.Tensor.numpy(dof_gt_ITK[0,:].detach().cpu())))
+                    print("=========================================================================================================================================")
                 # sys.exit()
                 epoch_loss = running_loss / num_cases[phase]
                 epoch_running_localNCC = running_localNCC/num_cases[phase]
@@ -1898,8 +1912,8 @@ def train_DeepRCS2V_model(model, training_dataset_frame, training_dataset_volume
                     lowest_loss = epoch_loss
                     best_ep = epoch
                     print('**** best model updated with loss={:.4f} ****'.format(lowest_loss))
-                if epoch%5 == 0 and epoch != 0:
-                    fn_save = path.join(output_dir, '{}_{}.pth'.format(trained_model_list[str(TRAINED_MODEL)], epoch))
+                if epoch%10 == 0 and epoch != 0:
+                    fn_save = path.join(output_dir, '{}_{}_resume_weaksuper.pth'.format(trained_model_list[str(TRAINED_MODEL)], epoch))
                     torch.save(model.state_dict(), fn_save)
                 
                 torch.cuda.empty_cache()    
@@ -2169,7 +2183,8 @@ if __name__ == '__main__':
         if TRAINED_MODEL == 3:
             model = RegS2Vnet.DeepRCS2V(num_cascades=3, device= device)
             if RESUME_MODEL:
-                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_featurefusion/", 'XXX.pth') # 
+                # pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepRCS2V_v2", 'DeepRCS2V_270_unsuper.pth') # 
+                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepRCS2V_v2", 'DeepRCS2V_490_resume.pth')
                 model.load_state_dict(torch.load(pretrained_model, map_location=device))
                 print("RESUME model: {}".format(pretrained_model))
             tv_hist = train_DeepRCS2V_model(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)

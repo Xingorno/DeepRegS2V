@@ -1248,28 +1248,28 @@ class DeepF2F(nn.Module):
         self.shared_weight = shared_weight
         self.device = device
         self.frame_encoder = nn.Sequential(
-            nn.Conv2d(2, 16, kernel_size=3, stride = 1, padding='valid'),
+            nn.Conv2d(2, 16, kernel_size=3, stride = 1, padding=1),
             nn.LeakyReLU(inplace=True),
             ResNetBottleneck2d(16, 16),
             nn.MaxPool2d(4),
-            nn.Conv2d(16, 32, kernel_size=3, stride = 1, padding='valid'),
+            nn.Conv2d(16, 32, kernel_size=3, stride = 1, padding=1),
             nn.LeakyReLU(inplace=True),
             ResNetBottleneck2d(32, 32),
             nn.MaxPool2d(3),
-            nn.Conv2d(32, 64, kernel_size=3, stride = 1, padding='valid'),
+            nn.Conv2d(32, 64, kernel_size=3, stride = 1, padding=1),
             nn.LeakyReLU(inplace=True),
             ResNetBottleneck2d(64, 64),
-            nn.MaxPool2d(3),
-            nn.Conv2d(64, 128, kernel_size=3, stride = 1, padding='valid'),
+            nn.MaxPool2d(2),
+            nn.Conv2d(64, 128, kernel_size=3, stride = 1, padding=1),
             nn.LeakyReLU(inplace=True),
             ResNetBottleneck2d(128, 128),
             nn.AvgPool2d(2)
         )
         self.relu = nn.LeakyReLU(inplace=True)
-        self.fc0 = nn.Linear(1024, 512)
+        self.fc0 = nn.Linear(1536, 512)
         self.fc1 = nn.Linear(512, 256)
         self.fc2 = nn.Linear(256, 6)
-
+        self.tanh = nn.Tanh()
     def forward(self, img_fixed, img_moving):
         if self.shared_weight:
             img_combined = torch.cat((img_fixed, img_moving), dim = 1) # N*1*W*H -> N*2*W*H
@@ -1277,11 +1277,17 @@ class DeepF2F(nn.Module):
             # print("img_combined:{}".format(img_combined.shape))
             x = self.frame_encoder(img_combined)
             # print("x shape: {}".format(x.shape))
+            
             x = x.view(x.size(0), -1)
             x = self.fc0(x)
+            x = self.relu(x)
             x = self.fc1(x)
+            x = self.relu(x)
             x = self.fc2(x)
+            x = self.tanh(x)
+
             # print("x shape: {}".format(x.shape))
+            # sys.exit()
             return x # dof non-normalized
 
 class STN(nn.Module):
@@ -1295,7 +1301,7 @@ class STN(nn.Module):
         if delta_mat_accumulate_list == None:
             affine_transform_combined = initial_transform
             # affine_transform_combined.to(self.device)
-            affine_transform_combined.require_grad = False
+            # affine_transform_combined.require_grad = False
             grid_affine = F.affine_grid(theta= affine_transform_combined[:, 0:3, :], size = vol.shape, align_corners=True)
             vol_resampled = F.grid_sample(vol, grid_affine, align_corners=True)
             vol_resampled.to(self.device)
@@ -1303,9 +1309,10 @@ class STN(nn.Module):
         else:
             # print("self.correction_transform: {}".format(self.correction_transform))
             # print("correction_transform_: {}".format(correction_transform_))
-            volume_size = [vol.shape[4], vol.shape[3], vol.shape[2]]
-            correction_transform = transform_conversion_ITK_torch_to_pytorch(delta_mat_accumulate_list[-1], volume_size, device=self.device) # normalized the theta-transfrom (pytorch)
-            affine_transform_combined = torch.matmul(correction_transform, initial_transform)
+            # volume_size = [vol.shape[4], vol.shape[3], vol.shape[2]]
+            # correction_transform = transform_conversion_ITK_torch_to_pytorch(delta_mat_accumulate_list[-1], volume_size, device=self.device) # normalized the theta-transfrom (pytorch)
+            
+            affine_transform_combined = torch.matmul(delta_mat_accumulate_list[-1], initial_transform)
             # affine_transform_combined.to(self.device)
             grid_affine = F.affine_grid(theta= affine_transform_combined[:, 0:3, :], size = vol.shape, align_corners=True)
             vol_resampled = F.grid_sample(vol, grid_affine, align_corners=True)
@@ -1337,14 +1344,14 @@ class DeepRCS2V(nn.Module):
         for index, model in enumerate(self.stems):
             if index == 0:
                 vol_sampled = self.spatial_transformer(vol, initial_transform = initial_transform)
-                theta = model(img_fixed, vol_sampled[:,:,int(vol_sampled.shape[2]*0.5),:,:]) # non-normalized
-                delta_mat_accumulate = tools.dof2mat_tensor(input_dof=theta).type(torch.FloatTensor)
+                theta = model(img_fixed, vol_sampled[:,:,int(vol_sampled.shape[2]*0.5),:,:])
+                delta_mat_accumulate = tools.dof2mat_tensor_normalized(input_dof=theta).type(torch.FloatTensor)
                 delta_mat_accumulate= delta_mat_accumulate.to(self.device)
                 delta_mat_accumulate_list.append(delta_mat_accumulate)
             else:
                 vol_sampled = self.spatial_transformer(vol, initial_transform = initial_transform, delta_mat_accumulate_list = delta_mat_accumulate_list)
                 theta = model(img_fixed, vol_sampled[:,:,int(vol_sampled.shape[2]*0.5),:,:])
-                delta_mat = tools.dof2mat_tensor(input_dof=theta).type(torch.FloatTensor)
+                delta_mat = tools.dof2mat_tensor_normalized(input_dof=theta).type(torch.FloatTensor)
                 delta_mat = delta_mat.to(self.device)
                 delta_mat_accumulate = torch.matmul(delta_mat, delta_mat_accumulate_list[-1]) # non-normalized
                 delta_mat_accumulate_list.append(delta_mat_accumulate)
