@@ -2,6 +2,14 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import torch.nn as nn
+import tools
+
+def loss_geodesic(gt_rmat, predict_rmat):
+    theta = tools.compute_geodesic_distance_from_two_matrices(gt_rmat, predict_rmat)
+    # print("geodesic distance (radian): {}".format(theta))
+    error = theta.mean()
+    return error
+
 
 class LocalNCC_new:
     def __init__(self, device = "cuda:0", kernel_size =(51, 51), stride = (1, 1), sampling = 'regular', padding = 'valid', reduction = 'mean', cropping = True, eps = 1e-5, win_eps = 0.98):
