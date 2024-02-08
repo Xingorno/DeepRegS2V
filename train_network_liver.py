@@ -72,7 +72,7 @@ parser.add_argument('-m', '--model_filename',
 parser.add_argument('-l', '--learning_rate',
                     type=float,
                     help='Learning rate',
-                    default=1e-7)
+                    default=1e-8)
 
 parser.add_argument('-d', '--device_no',
                     type=int,
@@ -115,14 +115,14 @@ batch_size = args.batch_size
 num_epochs = args.epochs
 
 project_dir = os.getcwd()
-output_dir = os.path.join(project_dir, "src/outputs_DeepS2VFF_nondrop_rot")
+output_dir = os.path.join(project_dir, "src/outputs_DeepS2VFF_nondrop_rot_continue")
 isExist = os.path.exists(output_dir)
 if not isExist:
     os.makedirs(output_dir)
 
 DEEP_MODEL = True
 NONDEEP_MODEL = False
-RESUME_MODEL = False
+RESUME_MODEL = True
 TRAINED_MODEL = 7 # "5" is working
 trained_model_list = {'1': 'FVnet-supervised', '2': 'DeepS2VFF', '3':'DeepRCS2V', '4':"DeepS2VFF_simplified", '5':"DeepS2VFF_simplified_nodrop", '6':"DeepS2VFF_simplified_adddrop", '7':"DeepS2VFF_nodrop_rot"}
 # net = 'DeepS2VFF_refine_leakyReLU_localNCC'
@@ -159,7 +159,7 @@ def filename_list(dir):
     return images
 
 
-def save_info():
+def save_info(num_cases = None):
     file = open(os.path.join(output_dir, 'setting.txt'), 'a+')
     file.write('Epochs: {}\n'.format(args.epochs))
     file.write('Batch_size: {}\n'.format(args.batch_size))
@@ -167,6 +167,10 @@ def save_info():
     file.write('Learning_rate: {}\n'.format(args.learning_rate))
     file.write('Supervise type: {}\n'.format("weakly_supervised"))
     file.write('Rotation representation type: {}\n'.format("ortho6d"))
+    if num_cases != None:
+        file.write("Number of training cases: {}\n".format(num_cases['train']))
+        file.write("Number of validation cases: {}\n".format(num_cases['val']))
+
     file.close()
     print('Information has been saved!')
 
@@ -1320,7 +1324,7 @@ def train_model_rot_representation(model, training_dataset_frame, training_datas
                     cur_lr = float(scheduler.get_last_lr()[0])
                     # print(scheduler.get_last_lr())
                     print("=========================================================================================================================================")
-                    print('{}/{}: Train (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(loss_NCC), {:.4f}(loss_trans), {:.4f}(loss_rot)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined.detach().cpu(), image_localNCC_loss.detach().cpu(), torch.sqrt(translation_loss.detach().cpu()), rotation_loss.detach().cpu()))
+                    print('{}/{}: Train (lr = {:.9f}): {:.4f}(loss_combined), {:.4f}(loss_NCC), {:.4f}(loss_trans), {:.4f}(loss_rot)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined.detach().cpu(), image_localNCC_loss.detach().cpu(), torch.sqrt(translation_loss.detach().cpu()), rotation_loss.detach().cpu()))
                     print("=========================================================================================================================================")
                 # sys.exit()
                 scheduler.step()
@@ -1438,7 +1442,7 @@ def train_model_rot_representation(model, training_dataset_frame, training_datas
                     np.set_printoptions(precision=4)
                     print("=========================================================================================================================================")
                     # print('{}/{}: Train-BATCH: {:.4f}(loss_combined), {:.4f}(image_localNCC_loss), {:.6f}(loss_translation),  {:.4f}(loss_rotation)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), loss_combined, image_localNCC_loss, translation_loss, rotation_loss))
-                    print('{}/{}: Train (lr = {:.7f}): {:.4f}(loss_combined), {:.4f}(loss_NCC), {:.4f}(loss_trans), {:.4f}(loss_rot)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined.detach().cpu(), image_localNCC_loss.detach().cpu(), torch.sqrt(translation_loss_unnormlized.detach().cpu()), rotation_loss_unnormlized.detach().cpu()))
+                    print('{}/{}: Train (lr = {:.9f}): {:.4f}(loss_combined), {:.4f}(loss_NCC), {:.4f}(loss_trans), {:.4f}(loss_rot)'.format(nth_batch, math.ceil(num_cases[phase]/batch_size), cur_lr, loss_combined.detach().cpu(), image_localNCC_loss.detach().cpu(), torch.sqrt(translation_loss_unnormlized.detach().cpu()), rotation_loss_unnormlized.detach().cpu()))
                     print("[dof_gt(deg)]{}".format(rotation_correction_gt_degree_unnormalized[0,:].detach().cpu()))
                     print("[dof_est(deg)] {}".format(rotation_correction_est_degree_unnormalized[0,:].detach().cpu()))
                     print("=========================================================================================================================================")
@@ -1454,8 +1458,8 @@ def train_model_rot_representation(model, training_dataset_frame, training_datas
                     lowest_loss = epoch_loss
                     best_ep = epoch
                     print('**** best model updated with loss={:.4f} ****'.format(lowest_loss))
-                if epoch%10 == 0 and epoch != 0:
-                    fn_save = path.join(output_dir, '{}_{}_b2_weaksuper.pth'.format(trained_model_list[str(TRAINED_MODEL)], epoch))
+                if epoch%1 == 0 and epoch != 0:
+                    fn_save = path.join(output_dir, '{}_{}_b2_weaksuper_continue.pth'.format(trained_model_list[str(TRAINED_MODEL)], epoch+103))
                     torch.save(model.state_dict(), fn_save)
                 
                 # torch.cuda.empty_cache()    
@@ -2373,7 +2377,7 @@ def train_nondeep_model(dataset_frame, dataset_volume, frame_index, visualize = 
 
 if __name__ == '__main__':
     
-    save_info()
+    
 
     """load dataset setting file and create the dictionary"""
     
@@ -2468,6 +2472,8 @@ if __name__ == '__main__':
         # print("number of cases: ", len(training_dataset_2DUS))
         # sys.exit()
         num_cases = {'train': len(training_dataset_2DUS), 'val': len(validation_dataset_2DUS)}
+        
+        save_info(num_cases)
         # Define the training model architecture
         if TRAINED_MODEL == 1:
             model = RegS2Vnet.mynet3(layers=[3, 8, 36, 3]).to(device=device)
@@ -2527,7 +2533,8 @@ if __name__ == '__main__':
         if TRAINED_MODEL == 7:
             model = RegS2Vnet.RegS2Vnet_featurefusion_nondrop_rot(mode = 'ortho6d', normalization = False).to(device=device)
             if RESUME_MODEL:
-                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_nondrop", 'xxx.pth') # 
+                # pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_nondrop_rot", 'DeepS2VFF_nodrop_rot_490_b2_weaksuper.pth') # 
+                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_nondrop_rot_continue", 'DeepS2VFF_nodrop_rot_103_b2_weaksuper_continue.pth') # 
                 model.load_state_dict(torch.load(pretrained_model, map_location=device))
                 print("RESUME model: {}".format(pretrained_model))
             tv_hist = train_model_rot_representation(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
