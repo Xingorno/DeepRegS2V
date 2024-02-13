@@ -117,7 +117,7 @@ if not isExist:
 DEEP_MODEL = False
 NONDEEP_MODEL = True
 TRAINED_MODEL = 5
-trained_model_list = {'1': 'FVnet-supervised', '2': 'DeepS2VFF', '3':'DeepRCS2V', '4':"DeepS2VFF_simplified", '5':"DeepS2VFF_simplified_nodrop" }
+trained_model_list = {'1': 'FVnet-supervised', '2': 'DeepS2VFF', '3':'DeepRCS2V', '4':"DeepS2VFF_simplified", '5':"DeepS2VFF_simplified_nodrop",'6':"DeepS2VFF_simplified_adddrop", '7':"DeepS2VFF_nodrop_rot" }
 net = 'testing'
 
 addNoise =True
@@ -1059,6 +1059,213 @@ def evaluation_model_DeepS2VFF_simplified(model, dataset_frame, dataset_volume, 
     update_info(best_epoch=0, current_epoch=0, lowest_val_TRE=0, tv_hist=tv_hist, testing=True)
     return tv_hist
 
+def evaluation_model_DeepS2VFF_simplified_rot(model, dataset_frame, dataset_volume, num_cases, frame_index = None, visualize=False):
+    
+    loss_mse = nn.MSELoss()
+    # setting 1: larger image size [400, 320, 240]
+    # kernel_size = 91
+
+    # setting 2: volume size [200, 160, 120]
+    kernel_size = 51
+    loss_localNCC = loss_F.LocalNCC_new(device = device, kernel_size =(kernel_size, kernel_size), stride=(2, 2), padding="valid", win_eps= 0.98)
+
+    
+    tv_hist = {'testing': []}
+    running_loss = 0.0
+    running_localNCC = 0.0
+    running_dof_rotation = 0.0
+    running_dof_translation = 0.0
+    running_time = 0.0
+
+    phase = 'testing'
+    print('*' * 10 +'Network (DeepS2V feature fusion simplified (nodrop)) is in {}...'.format(phase) + '*' * 10)
+
+    model.eval()
+    model.require_grad = False
+
+    """loading volume first"""
+    vol_tensor = dataset_volume[dataset_frame[0]["volume_ID"]]["volume_name"]
+    vol_tensor = vol_tensor.unsqueeze(0).type(torch.FloatTensor)
+    vol_tensor = torch.permute(vol_tensor, (0, 1, 4, 3, 2)).type(torch.FloatTensor)
+    vol_tensor = vol_tensor.to(device)
+    volume_size = dataset_volume[0]['volume_name'].shape
+
+    """define the frame index"""
+    if frame_index == None:
+        print("Evaluating the whole video clip, in total {} frames".format(num_cases[phase]))
+        frame_index0 = 0
+        num_frames = num_cases[phase]
+    else:
+        print("Evaluating the single frame {}".format(frame_index))
+        frame_index0 = frame_index
+        num_frames = frame_index0 + 1
+    fig = plt.figure(figsize=(16, 9))
+    since = time.time()
+    for frame_ID in range(frame_index0, num_frames):
+        starting = time.time()
+
+        """loading frames"""
+        frame_tensor = dataset_frame[frame_ID]["frame_name"].type(torch.FloatTensor).to(device)
+        frame_tensor = torch.permute(frame_tensor, (0, 3, 2, 1))
+        frame_flip_flag = dataset_frame[frame_ID]["frame_flip_flag"]
+        if frame_flip_flag == "True":
+            frame_tensor = torch.flip(frame_tensor, [3])
+        frame_tensor = frame_tensor.unsqueeze(2)
+
+        # print("frame tensor shape: {}".format(frame_tensor.shape))
+
+        dof_tensor = dataset_frame[frame_ID]["tfm_gt_diff_dof"].type(torch.FloatTensor)
+        dof_tensor = dof_tensor.unsqueeze(0)
+        dof_tensor = dof_tensor.to(device)
+        dof_tensor = dof_tensor.squeeze(1)
+        # forward
+        with torch.set_grad_enabled(False):
+
+            initial_transform = dataset_frame[frame_ID]["tfm_RegS2V_initial_mat_normalized"]
+            initial_transform = initial_transform.type(torch.FloatTensor).to(device)
+            initial_transform = initial_transform.unsqueeze(0)
+            """get the initialized volume"""
+            grid_affine = F.affine_grid(theta= initial_transform[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
+            vol_initialized = F.grid_sample(vol_tensor, grid_affine, align_corners=True)
+            
+            # vol_resampled, dof_estimated = model(vol=vol_initialized, frame=frame_tensor, initial_transform = initial_transform, device=device) # shape batch_size*6
+            vol_resampled, x_estimated = model(vol=vol_initialized, frame=frame_tensor, initial_transform = initial_transform, vol_original=vol_tensor, device=device) # shape batch_size*6
+                        
+            """image intensity-based loss (localNCC)"""
+            frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
+            ending = time.time()
+
+            vol_size = [vol_initialized.shape[4], vol_initialized.shape[3], vol_initialized.shape[2]]
+
+            translation_para = x_estimated[:, :3]
+            rotation_para = x_estimated[:, 3:] # this could be batch*3, batch*4, batch*6 or batch*9, which is determined by mode
+            rt_mat_unnormalized, rt_mat_unnormalized_inv = tools.networkOutput2AffineTransform_ITK(rotation_para, translation_para, mode= "ortho6d", vol_size = [200, 160, 120], device=device)
+            rotm_correction_estimated_unnormalized_inv = rt_mat_unnormalized_inv[:, 0:3, 0:3]
+            trans_correction_estimated_unnormalized_inv = rt_mat_unnormalized_inv[:, 0:3, 3]
+            
+            # dof_estimated_ITK = transform_conversion_dof_normalized_to_ITK(dof_normalized=x_estimated, vol_size = vol_size, device=device)
+            # dof_gt_ITK = transform_conversion_dof_normalized_to_ITK(dof_normalized=dof_tensor, vol_size = vol_size, device=device)
+            tfm_correction_unnormalized = dataset_frame[frame_ID]["tfm_correction_mat_unnormalized"]
+            tfm_correction_unnormalized = tfm_correction_unnormalized.type(torch.FloatTensor).to(device)
+            tfm_correction_unnormalized = tfm_correction_unnormalized.unsqueeze(0)
+            tfm_correction_unnormalized_inv = torch.linalg.inv(tfm_correction_unnormalized)
+            rotm_correction_gt_unnormalized_inv = tfm_correction_unnormalized_inv[:, 0:3, 0:3]
+            trans_correction_gt_unnormalized_inv = tfm_correction_unnormalized_inv[:, 0:3, 3]
+            
+            """rotation loss"""
+            # rotation_loss = 0
+            rotation_loss = loss_F.loss_geodesic(rotm_correction_gt_unnormalized_inv, rotm_correction_estimated_unnormalized_inv) # range [0, 3.14]
+            """translation loss (mm)"""
+            translation_loss = loss_mse(trans_correction_gt_unnormalized_inv, trans_correction_estimated_unnormalized_inv)
+            
+            # """rotation loss (deg)"""
+            # rotation_loss = loss_mse(dof_estimated[:, 3:], dof_tensor[:, 3:])
+            # rotation_loss_ITK = loss_mse(dof_estimated_ITK[:, 3:], dof_gt_ITK[:, 3:])
+            # """translation loss (mm)"""
+            # translation_loss = loss_mse(dof_estimated[:, :3], dof_tensor[:, :3])
+            # translation_loss_ITK = loss_mse(dof_estimated_ITK[:, :3], dof_gt_ITK[:, :3])
+            frame_tensor_gt = frame_tensor.squeeze(2)
+            # frame_tensor_gt = frame_tensor_gt.type(torch.FloatTensor).to(device)
+        
+            ##############################################################
+            # """visualize the initialized images"""
+            if visualize:
+                sampled_frame_est = vol_resampled[:,:, int(volume_size[3]*0.5), :, :]
+                sampled_frame_DeepS2VFF_np = torch.Tensor.numpy(sampled_frame_est.detach().cpu())
+                sampled_frame_ini = vol_initialized[:,:, int(volume_size[3]*0.5), :, :]
+                sampled_frame_DeepS2VFF_ini_np = torch.Tensor.numpy(sampled_frame_ini.detach().cpu())
+                
+                affine_transform_gt = dataset_frame[frame_ID]['tfm_RegS2V_gt_mat_normalized'].type(torch.FloatTensor).to(device)
+                affine_transform_gt = affine_transform_gt.unsqueeze(0)
+                grid_affine_gt = F.affine_grid(theta= affine_transform_gt[:, 0:3, :], size = vol_tensor.shape, align_corners=True)
+                vol_gt = F.grid_sample(vol_tensor, grid_affine_gt, align_corners=True)
+                sampled_frame_gt = vol_gt[:,:, int(volume_size[3]*0.5), :, :]
+                sampled_frame_ITK_np = torch.Tensor.numpy(sampled_frame_gt.detach().cpu())
+                
+                frame_gt_np = torch.Tensor.numpy(frame_tensor_gt.detach().cpu())
+                # print("frame_gt_np",frame_gt_np.size)
+                
+                # ax1 = fig.add_subplot(141)
+                # ax2 = fig.add_subplot(142)
+                # ax3 = fig.add_subplot(143)
+                # ax4 = fig.add_subplot(144)
+                # ax1.imshow(frame_gt_np[0, 0, :, :], cmap = "gray")
+                # ax1.set_title("US frame (target)")
+                # ax2.imshow(sampled_frame_ITK_np[0, 0, :, :], cmap = "gray")
+                # ax2.set_title("Resampled image (ITK approach)")
+                # ax3.imshow(sampled_frame_DeepS2VFF_ini_np[0, 0, :, :], cmap = "gray")
+                # ax3.set_title("Resampled image (DeepS2VFF initial)")
+                # ax4.imshow(sampled_frame_DeepS2VFF_np[0, 0, :, :], cmap = "gray")
+                # ax4.set_title("Resampled image (DeepS2VFF)")
+                # plt.show(block=False)
+                # plt.pause(1.0)
+                # plt.clf()
+
+                ax1 = fig.add_subplot(131)
+                ax2 = fig.add_subplot(132)
+                ax3 = fig.add_subplot(133)
+                # ax4 = fig.add_subplot(144)
+                ax1.imshow(frame_gt_np[0, 0, :, :], cmap = "gray")
+                ax1.set_title("US frame (target)")
+                ax2.imshow(sampled_frame_ITK_np[0, 0, :, :], cmap = "gray")
+                ax2.set_title("Resampled image (ITK approach)")
+                # ax3.imshow(sampled_frame_DeepS2VFF_ini_np[0, 0, :, :], cmap = "gray")
+                # ax3.set_title("Resampled image (DeepS2VFF initial)")
+                ax3.imshow(sampled_frame_DeepS2VFF_np[0, 0, :, :], cmap = "gray")
+                ax3.set_title("Resampled image (DeepS2VFF)")
+                plt.show(block=False)
+                plt.pause(1.0)
+                plt.clf()
+
+            # sys.exit()
+            
+            image_localNCC_loss, ROI = loss_localNCC(frame_estimated, frame_tensor_gt)
+            
+            # coefficients for loss functinos
+            # alpha = 100.0
+            # beta = 100.0
+            # gamma = 1.0
+            alpha = 50.0/155.0 # range (0-3.14)
+            beta = 5.0/155.0 # range(0 - 150)
+            gamma = 100.0/155.0 # range (~-0.5)
+            
+            loss_combined = alpha*rotation_loss + beta*translation_loss + gamma*image_localNCC_loss
+            
+            # print("loss_combined is leaf_variable (guess False): ", loss_combined.is_leaf)
+            # print("loss_combined is required_grad (guess True): ", loss_combined.requires_grad)
+            # print("loss_combined device (guess cuda): ", loss_combined.device)
+            
+            # print("loss_combined: ", loss_combined)
+            time_elapsed = ending-starting
+            tv_hist[phase].append([float(loss_combined), float(image_localNCC_loss), float(rotation_loss), float(translation_loss), float(time_elapsed)])
+            print("=========================================================================================================================================")
+            print('Testing(single frame): {:.4f}(loss_combined), {:.4f}(loss_localNCC), {:.4f}(loss_rotation_dof), {:.4f}(loss_transaltion_dof), used {:.2f}(seconds)'.format(tv_hist[phase][-1][0], tv_hist[phase][-1][1], tv_hist[phase][-1][2], tv_hist[phase][-1][3], tv_hist[phase][-1][4]))
+            # print("(dof-est_ITK){}".format(torch.Tensor.numpy(dof_estimated_ITK[0,:].detach().cpu())))
+            # print("(dof-gt_ITK) {}".format(torch.Tensor.numpy(dof_gt_ITK[0,:].detach().cpu())))
+            print("=========================================================================================================================================")    
+        update_info(best_epoch=0, current_epoch=0, lowest_val_TRE=0, tv_hist=tv_hist, testing=True)
+        # sys.exit()
+        running_loss += loss_combined 
+        running_localNCC += image_localNCC_loss
+        running_dof_rotation += rotation_loss 
+        running_dof_translation += translation_loss
+        running_time += time_elapsed
+
+    # sys.exit()
+    epoch_loss = running_loss / num_cases[phase]
+    epoch_running_localNCC = running_localNCC/num_cases[phase]
+    epoch_running_dof_rotation = running_dof_rotation/num_cases[phase]
+    epoch_running_dof_transaltion = running_dof_translation/num_cases[phase]
+    epoch_runing_time_avg = running_time/num_cases[phase]
+
+    tv_hist[phase].append([float(epoch_loss), float(epoch_running_localNCC), float(epoch_running_dof_rotation), float(epoch_running_dof_transaltion), float(epoch_runing_time_avg)])
+    # print('tv_hist\n{}'.format(tv_hist))
+
+    time_elapsed = time.time() - since
+    print('*' * 10 + 'Testing complete in {:.2f}s'.format(time_elapsed) + '*' * 10)
+    update_info(best_epoch=0, current_epoch=0, lowest_val_TRE=0, tv_hist=tv_hist, testing=True)
+    return tv_hist
+
 
 
 def evaluation_model_FVNet(model, dataset_frame, dataset_volume, num_cases, frame_index = None, visualize=False):
@@ -1475,7 +1682,17 @@ if __name__ == '__main__':
             model.load_state_dict(torch.load(trained_model, map_location=device))
             print("RESUME model: {}".format(trained_model))
             tv_hist = evaluation_model_DeepS2VFF_simplified(model, testing_dataset_2DUS, testing_dataset_3DUS, num_cases, frame_index = None, visualize=False)
+        if TRAINED_MODEL == 6:
+            model = RegS2Vnet.RegS2Vnet_featurefusion_simplified_adddrop().to(device=device)
+            trained_model = path.join("E:\PROGRAM\Project_PhD\Registration\DeepRegS2V\src\outputs\models\DeepS2VFF_weaklySupervised", "DeepS2VFF_simplified_nodrop_180_bs2_weaksuper.pth")
+            model.load_state_dict(torch.load(trained_model, map_location=device))
+            print("RESUME model: {}".format(trained_model))
+            tv_hist = evaluation_model_DeepS2VFF_simplified(model, testing_dataset_2DUS, testing_dataset_3DUS, num_cases, frame_index = None, visualize=True)
 
+        if TRAINED_MODEL == 7:
+            model = RegS2Vnet.RegS2Vnet_featurefusion_nondrop_rot(mode = 'ortho6d', normalization = True).to(device=device)
+            trained_model = path.join("E:\PROGRAM\Project_PhD\Registration\DeepRegS2V\src\outputs\models\DeepS2VFF_nondrop_rot", "DeepS2VFF_nodrop_rot_347_b2_weaksuper_continue.pth")
+            model.load_state_dict(torch.load(trained_model, map_location=device))
         json_obj = json.dumps(tv_hist)
         f = open(os.path.join(output_dir, 'results_LHV05_pre02_sweep03.json'), 'w')
         # write json object to file
