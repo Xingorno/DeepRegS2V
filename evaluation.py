@@ -219,7 +219,7 @@ def ConvertNumpyArray2ITKTransform(transform_array):
     transform.SetTranslation(translation)
     return transform
 
-def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_flag = True, augmented = True):
+def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_flag = True, augmented = True, create_augment_data=False):
 
     project_src_dir = os.path.join(project_dir, "src")
     project_data_dir = os.path.join(project_dir, "data")
@@ -299,7 +299,10 @@ def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_fla
         # get the transform metadata (slice to volume registration)
         tfm_RegS2V_metadata = case_root.find('slice_to_volume_registration')
         if augmented:
-            step = 2
+            if create_augment_data:
+                step = 1 # when not loading data, this is for creating the dataset
+            else:
+                step = 2 # this number may change
         else:
             step = 1
         for frame_index in range(rangeMin, rangeMax + 1, step): # add step
@@ -360,8 +363,11 @@ def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_fla
             case_dict = {'volume_ID': case_index, 
                          "frame_name":fixed_image_fileNAME,'frame_mask_name': fixed_image_mask_fileNAME,
                          "tfm_RegS2V": [tfm_3DUS_CT_fileNAME, tfm_RegS2V_initial_fileNAME, tfm_RegS2V_correction_fileNAME, tfm_RegS2V_correction_fileNAME_pre],
-                         "tfm_gt_diff_mat": None, "tfm_gt_diff_dof": None,
-                         "tfm_RegS2V_initial_mat": None, "tfm_RegS2V_gt_mat": None, "frame_flip_flag": frame_flip_flag, "augment_flag": 'False'}
+                         "tfm_correction_mat_normalized": None, "tfm_correction_dof_normalized": None,
+                         "tfm_correction_mat_unnormalized":None,  
+                         "tfm_RegS2V_initial_mat_normalized": None, "tfm_RegS2V_gt_mat_normalized": None,
+                         "tfm_RegS2V_initial_mat_unnormalized": None, "tfm_RegS2V_gt_mat_unnormalized": None,
+                         "frame_flip_flag": frame_flip_flag, "augment_flag": 'False'}
             if augmented:
                 if phase == "train":
                     if case_index < 15:
@@ -394,6 +400,182 @@ def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_fla
         
         # print(dom.toprettyxml())
     return alldataset_LUT, volume_LUT
+
+# def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_flag = True, augmented = True):
+
+#     project_src_dir = os.path.join(project_dir, "src")
+#     project_data_dir = os.path.join(project_dir, "data")
+    
+#     if phase == 'train':
+#         if augmented:
+#             dataset_dict_fileNAME = os.path.join(project_src_dir, "training_dataset_dict_aug.xml")
+#             volume_dict_fileNAME = os.path.join(project_src_dir, "training_volume_dict_aug.xml")
+#         else:
+#             dataset_dict_fileNAME = os.path.join(project_src_dir, "training_dataset_dict.xml")
+#             volume_dict_fileNAME = os.path.join(project_src_dir, "training_volume_dict.xml")
+#     elif phase == 'val':
+#         dataset_dict_fileNAME = os.path.join(project_src_dir, "validation_dataset_dict.xml")
+#         volume_dict_fileNAME = os.path.join(project_src_dir, "validation_volume_dict.xml")
+#     elif phase == 'test':
+#         dataset_dict_fileNAME = os.path.join(project_src_dir, "test_dataset_dict.xml")
+#         volume_dict_fileNAME = os.path.join(project_src_dir, "test_volume_dict.xml")
+#     else:
+#         dataset_dict_fileNAME = os.path.join(project_src_dir, phase + "_dataset_dict.xml")
+#         volume_dict_fileNAME = os.path.join(project_src_dir, phase + "_volume_dict.xml")
+    
+#     if platform.system() == "Linux":
+#         dataset_dict_fileNAME = '/'.join(dataset_dict_fileNAME.split('\\'))
+#         volume_dict_fileNAME = '/'.join(volume_dict_fileNAME.split('\\'))
+
+#     num_of_cases = len(cases_metadata) # number of volumes
+#     alldataset_LUT = []
+#     volume_LUT = []
+#     for case_index in range(0, num_of_cases):
+        
+
+#         path = os.path.join(project_data_dir, cases_metadata[case_index].text)
+#         if platform.system() == 'Linux':
+#             path = '/'.join(path.split('\\'))
+#         case_tree = ET.parse(path)
+#         case_root = case_tree.getroot()
+
+#         # get the volume name (moving image)
+#         moving_image_metadata = case_root.find('moving_image')
+#         moving_image_fileNAME = os.path.join(project_data_dir, moving_image_metadata.find('directory').text, moving_image_metadata.find('name_raw_US_volume').text)
+#         if platform.system() == 'Linux':
+#             moving_image_fileNAME = '/'.join(moving_image_fileNAME.split('\\'))
+        
+
+#         # get the mask of volume (moving image)
+#         moving_image_mask_metadata = case_root.find('moving_image_mask')
+#         moving_image_mask_fileNAME = os.path.join(project_data_dir, moving_image_mask_metadata.find('directory').text, moving_image_mask_metadata.find('name_rawdata').text)
+#         if platform.system() == 'Linux':
+#             moving_image_mask_fileNAME = '/'.join(moving_image_mask_fileNAME.split('\\'))
+        
+
+#         # get the fixed image
+#         fixed_images_metadata = case_root.find('fixed_image')
+#         rangeMin = int(fixed_images_metadata.find('rangeMin').text)
+#         rangeMax = int(fixed_images_metadata.find('rangeMax').text)
+
+#         # get the mask of fixed image
+#         fixed_image_mask_metadata = case_root.find('fixed_image_mask')
+#         fixed_image_mask_fileNAME = os.path.join(project_data_dir, fixed_image_mask_metadata.find('directory').text, fixed_image_mask_metadata.find('name').text)
+#         if platform.system() == 'Linux':
+#             fixed_image_mask_fileNAME = '/'.join(fixed_image_mask_fileNAME.split('\\'))
+        
+
+#         volume_case_dict = {'volume_ID': case_index,'volume_name': moving_image_fileNAME, "volume_mask_name": moving_image_mask_fileNAME}
+#         volume_LUT.append(volume_case_dict)
+#         # get the transform (3DUS to CT/MRI)
+#         tfm_3DUS_CT_metadata = case_root.find('transform_3DUS_CT')
+#         tfm_3DUS_CT_fileNAME = os.path.join(project_data_dir, tfm_3DUS_CT_metadata.find('directory').text, tfm_3DUS_CT_metadata.find('name').text)
+#         if platform.system() == 'Linux':
+#             tfm_3DUS_CT_fileNAME = '/'.join(tfm_3DUS_CT_fileNAME.split('\\'))
+
+        
+#         # get the frame flip flag
+#         US_image_setting_metadata = case_root.find('US_image_setting')
+#         frame_flip_flag = US_image_setting_metadata.find("flip").text
+
+#         # get the transform metadata (slice to volume registration)
+#         tfm_RegS2V_metadata = case_root.find('slice_to_volume_registration')
+#         if augmented:
+#             step = 2
+#         else:
+#             step = 1
+#         for frame_index in range(rangeMin, rangeMax + 1, step): # add step
+#             num_letters_frame_index = len(str(frame_index))
+#             if num_letters_frame_index == 1:
+#                 full_frame_index = '000' + str(frame_index)       
+#             elif num_letters_frame_index == 2:
+#                 full_frame_index = '00' + str(frame_index)      
+#             elif num_letters_frame_index == 3:
+#                 full_frame_index = '0' + str(frame_index)
+#             elif num_letters_frame_index == 4:
+#                 full_frame_index = str(frame_index)
+#             else :
+#                 print("checking out the maximum length of the filename!")
+            
+#             # get the fixed image filename
+#             fixed_image_filename = "Image_" + full_frame_index + ".mha"
+#             fixed_image_fileNAME = os.path.join(project_data_dir, fixed_images_metadata.find('directory').text, fixed_image_filename) 
+#             if platform.system() == 'Linux':
+#                 fixed_image_fileNAME = '/'.join(fixed_image_fileNAME.split('\\'))
+
+#             initial_frame_name = "initial_"+ full_frame_index + ".tfm"
+#             correction_frame_name = "correction_" + full_frame_index+ ".tfm"
+#             tfm_RegS2V_initial_fileNAME = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('initial_folder').text, initial_frame_name)
+#             tfm_RegS2V_correction_fileNAME = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('correction_folder').text, correction_frame_name)
+#             if platform.system() == 'Linux':
+#                 tfm_RegS2V_initial_fileNAME = '/'.join(tfm_RegS2V_initial_fileNAME.split('\\'))
+#                 tfm_RegS2V_correction_fileNAME = '/'.join(tfm_RegS2V_correction_fileNAME.split('\\'))
+
+#             if frame_index == rangeMin:
+#                 # fixed_image_fileNAME_pre = fixed_image_fileNAME
+#                 tfm_RegS2V_correction_fileNAME_pre = tfm_RegS2V_correction_fileNAME
+#             else:
+#                 num_letters_frame_index_pre = len(str(frame_index-1))
+#                 if num_letters_frame_index_pre == 1:
+#                     full_frame_index_pre = '000' + str(frame_index-1)       
+#                 elif num_letters_frame_index_pre == 2:
+#                     full_frame_index_pre = '00' + str(frame_index-1)      
+#                 elif num_letters_frame_index_pre == 3:
+#                     full_frame_index_pre = '0' + str(frame_index-1)
+#                 elif num_letters_frame_index_pre == 4:
+#                     full_frame_index_pre = str(frame_index-1)
+#                 else :
+#                     print("checking out the maximum length of the filename!")
+#                 # fixed_image_filename_pre = "Image_" + full_frame_index_pre + ".mha"
+#                 # fixed_image_fileNAME_pre = os.path.join(fixed_images_metadata.find('directory').text, fixed_image_filename_pre)
+
+#                 correction_frame_name = "correction_" + full_frame_index_pre+ ".tfm"
+#                 tfm_RegS2V_correction_fileNAME_pre = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('correction_folder').text, correction_frame_name)
+#                 if platform.system() == 'Linux':
+#                     tfm_RegS2V_correction_fileNAME_pre = '/'.join(tfm_RegS2V_correction_fileNAME_pre.split('\\'))
+
+#                 # case_frame_pair = [case_index, frame_index, frame_index-1]
+#             # case_dict = {'volume_ID': case_index, 'volume_name': moving_image_fileNAME, "volume_mask_name": moving_image_mask_fileNAME, 
+#             #              "frame_name":fixed_image_fileNAME, "frame_name_pre": fixed_image_fileNAME_pre, 'frame_mask_name': fixed_image_mask_fileNAME,
+#             #              "tfm_3DUS_CT_fileNAME": tfm_3DUS_CT_fileNAME, "tfm_RegS2V_initial_fileNAME": tfm_RegS2V_initial_fileNAME, "tfm_RegS2V_correction_fileNAME": tfm_RegS2V_correction_fileNAME, 
+#             #              "tfm_RegS2V_correction_fileNAME_pre": tfm_RegS2V_correction_fileNAME_pre}
+#             case_dict = {'volume_ID': case_index, 
+#                          "frame_name":fixed_image_fileNAME,'frame_mask_name': fixed_image_mask_fileNAME,
+#                          "tfm_RegS2V": [tfm_3DUS_CT_fileNAME, tfm_RegS2V_initial_fileNAME, tfm_RegS2V_correction_fileNAME, tfm_RegS2V_correction_fileNAME_pre],
+#                          "tfm_gt_diff_mat": None, "tfm_gt_diff_dof": None,
+#                          "tfm_RegS2V_initial_mat": None, "tfm_RegS2V_gt_mat": None, "frame_flip_flag": frame_flip_flag, "augment_flag": 'False'}
+#             if augmented:
+#                 if phase == "train":
+#                     if case_index < 15:
+#                         case_dict['augment_flag'] = 'False'
+#                     else:
+#                         case_dict['augment_flag'] = 'True'
+
+#             alldataset_LUT.append(case_dict)
+
+#     data_LUT_np = np.array(alldataset_LUT)
+
+#     # print("Lookuptable: ", data_LUT_np)
+#     # print("size of lut:", data_LUT_np.shape)
+#     if save_flag:
+#         # dataframe = pd.DataFrame(data_LUT_np, columns=['volume case ID', 'Transform ID (gt)', 'Transform ID (initial)'])
+#         # dataframe.to_csv(r"E:\PROGRAM\Project_PhD\Registration\Deepcode\FVR-Net\dataset_LUT.csv")
+#         alldataset_xml = dicttoxml(alldataset_LUT, custom_root="all_cases")
+#         dom = parseString(alldataset_xml)
+#         dom.writexml( open(dataset_dict_fileNAME, 'w'),
+#                indent="\t",
+#                addindent="\t",
+#                newl='\n')
+        
+#         volume_dict_xml = dicttoxml(volume_LUT, custom_root="volume_cases")
+#         dom = parseString(volume_dict_xml)
+#         dom.writexml( open(volume_dict_fileNAME, 'w'),
+#                indent="\t",
+#                addindent="\t",
+#                newl='\n')
+        
+#         # print(dom.toprettyxml())
+#     return alldataset_LUT, volume_LUT
 
 def CreateLookupTable(cases_metadata, project_dir, phase = 'train', save_flag = True):
 
@@ -555,14 +737,18 @@ def CreateLookupTable(cases_metadata, project_dir, phase = 'train', save_flag = 
     return alldataset_LUT, volume_LUT
 
 class LoadRegistrationTransformd(MapTransform):
-    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False, scale = 1, volume_size = None) -> None:
+    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False, scale = 1, volume_size = None, loading_data = False, step_size = 2) -> None:
         super().__init__(keys, allow_missing_keys)
         self.keys = keys
         self.scale = scale
         self.volume_size = volume_size #"W*H*D"
+        self.loading_data = loading_data
+        self.step_size = step_size
+        
     def __call__(self, data):
         """Keys tfm_3DUS_CT_fileNAME: ["tfm_3DUS_CT_fileNAME", "tfm_RegS2V_initial_fileNAME", "tfm_RegS2V_correction_fileNAME", "tfm_RegS2V_correction_fileNAME_pre"]""" 
         for key in self.keys:
+        
             tfm_3DUS_CT = sitk.ReadTransform(data[key][0]) # transform (from parent) LPS
             # print(tfm_3DUS_CT)
             tfm_3DUS_CT_np = ConvertITKTransform2NumpyArray(tfm_3DUS_CT) # from parent
@@ -601,7 +787,7 @@ class LoadRegistrationTransformd(MapTransform):
             # print("tfm_RegS2v_gt_np: {}".format(tfm_RegS2V_gt_np_to))
             """get transform_pytorch"""
             tfm_RegS2V_gt_pytorch = transform_conversion_ITK_to_pytorch(tfm_RegS2V_gt_np_to, self.volume_size) # this is the affine_transform_pytorch
-            tfm_RegS2V_gt_mat_tensor = torch.from_numpy(tfm_RegS2V_gt_pytorch) 
+            tfm_RegS2V_gt_mat_tensor = torch.from_numpy(tfm_RegS2V_gt_pytorch).type(torch.FloatTensor)
 
 
             """original transform_ITK (initial one)"""
@@ -609,12 +795,32 @@ class LoadRegistrationTransformd(MapTransform):
             tfm_RegS2V_correction_np_pre = ConvertITKTransform2NumpyArray(tfm_RegS2V_correction_pre) # from parent
             tfm_RegS2V_initial_np_from = tfm_3DUS_CT_np@tfm_RegS2V_initial_np@tfm_RegS2V_correction_np_pre # from parent
             tfm_RegS2V_initial_np_to = np.linalg.inv(tfm_RegS2V_initial_np_from) # (initial transform) to parent
-            if addNoise:
-                """adding noise translation: N(mean = 0, std = 3), rotation: N(mean = 0, std = 3)"""
-                translation_dof_noise = np.random.normal(0, 3, (3))
-                rotation_dof_noise = np.random.normal(0, 1.5, (3))
-                transform_dof_noise = np.concatenate((translation_dof_noise, rotation_dof_noise), axis =0)
+            # print("initial transform:", tfm_RegS2V_initial_np_to)
+            # addNoise = True
+            addAugment = data['augment_flag']
+            # addAugment = 'True'
+            # print("addAgument: ", addAugment)
+            if addAugment == 'True':
+                # print("addAgument: ", addAugment)
+                global augmentation_dof_data
+                global loading_data_index
+                if self.loading_data:
+                    # print("frame_name: ", data[key][3])
+                    transform_dof_noise = augmentation_dof_data[loading_data_index]
+                    loading_data_index = loading_data_index+ self.step_size
+                else:
+                    """adding noise translation: N(mean = 0, std = 3), rotation: N(mean = 0, std = 3)"""
+                    translation_dof_noise = np.array([np.random.uniform(-10, 10), np.random.uniform(-10, 10), np.random.uniform(-5, 5)])
+                    rotation_dof_noise = np.array([np.random.uniform(-5, 5), np.random.uniform(-5, 5), np.random.uniform(-10, 10)])
+                    transform_dof_noise = np.concatenate((translation_dof_noise, rotation_dof_noise), axis =0)
+                    transform_dof_noise = np.expand_dims(transform_dof_noise, axis=0)
+                    
+                    augmentation_dof_data = np.append(augmentation_dof_data, transform_dof_noise, axis=0)
+                    transform_dof_noise = np.squeeze(transform_dof_noise, axis = 0)
+
+                # print("transform_dof_noise:{}".format(transform_dof_noise.shape))
                 # print("transform_dof_noise:{}".format(transform_dof_noise))
+                # print("augmentation_dof_data: {}".format(augmentation_dof_data))
                 transform_noise_np = tools.dof2mat_np(transform_dof_noise) # 4 by 4 matrix
                 # print("transform_noise_np:{}".format(transform_noise_np))
                 """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
@@ -623,35 +829,59 @@ class LoadRegistrationTransformd(MapTransform):
                 """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
                 tfm_RegS2V_initial_np_to = T_scale@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
 
-            # print("initial transform:", tfm_RegS2V_initial_np_to)
-            
+
+            # if addNoise:
+            #     """adding noise translation: N(mean = 0, std = 3), rotation: N(mean = 0, std = 3)"""
+            #     translation_dof_noise = np.random.normal(0, 3, (3))
+            #     rotation_dof_noise = np.random.normal(0, 1.5, (3))
+            #     transform_dof_noise = np.concatenate((translation_dof_noise, rotation_dof_noise), axis =0)
+            #     # print("transform_dof_noise:{}".format(transform_dof_noise))
+            #     transform_noise_np = tools.dof2mat_np(transform_dof_noise) # 4 by 4 matrix
+            #     # print("transform_noise_np:{}".format(transform_noise_np))
+            #     """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
+            #     tfm_RegS2V_initial_np_to = T_scale@transform_noise_np@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
+            # else:
+            #     """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
+            #     tfm_RegS2V_initial_np_to = T_scale@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
+
+
+            # """transform_ITK to fake the pytorch transform (rescaled and recentered the orignal one)"""
+            # tfm_RegS2V_initial_np_to = T_scale@T_translate@tfm_RegS2V_initial_np_to@T_scale_inv  # this is the affine_transform_ITK
             """get transform_pytorch"""
             tfm_RegS2V_initial_pytorch = transform_conversion_ITK_to_pytorch(tfm_RegS2V_initial_np_to, self.volume_size) # this is the affine_transform_pytorch
-            tfm_RegS2V_initial_mat_tensor = torch.from_numpy(tfm_RegS2V_initial_pytorch)
+            tfm_RegS2V_initial_mat_tensor = torch.from_numpy(tfm_RegS2V_initial_pytorch).type(torch.FloatTensor)
             """caculate the different between the initial one and ground truth, which is for training"""
 
             # # """this is based on the transform_ITK, we decided to use the transform_pytorch to train our model, see below"""
+            
             # tfm_gt_diff_mat = tfm_RegS2V_gt_np_to@np.linalg.inv(tfm_RegS2V_initial_np_to)
-            # tfm_gt_diff_mat_tensor = torch.from_numpy(tfm_gt_diff_mat)
+            tfm_gt_diff_mat = np.linalg.inv(tfm_RegS2V_initial_np_to)@tfm_RegS2V_gt_np_to
+            tfm_gt_diff_mat_tensor = torch.from_numpy(tfm_gt_diff_mat)
+
+            # print("tfm_gt_diff_mat : {}".format(transform_conversion_ITK_to_pytorch(tfm_gt_diff_mat, self.volume_size)))
             # tfm_gt_diff_dof = tools.mat2dof_np(input_mat=tfm_gt_diff_mat)
             # tfm_gt_diff_dof_tensor = torch.from_numpy(tfm_gt_diff_dof[:6])
             # # tfm_RegS2V_initial_mat_tensor = torch.from_numpy(tfm_RegS2V_initial_np_to)
+            """Note: converting to ITK transform needs to be inversed"""
+            tfm_gt_diff_mat_normalized = tfm_RegS2V_gt_pytorch@np.linalg.inv(tfm_RegS2V_initial_pytorch) # 
+            # tfm_gt_diff_mat_normalized = np.linalg.inv(tfm_RegS2V_initial_pytorch) @ tfm_RegS2V_gt_pytorch# need to be inversed for normalized transform
+            tfm_gt_diff_mat_tensor_normalized = torch.from_numpy(tfm_gt_diff_mat_normalized).type(torch.FloatTensor)
+            tfm_gt_diff_dof_rad_normalized = tools.mat2dof_tensor(tfm_gt_diff_mat_tensor_normalized, degree = 'rad')
+            # dof_deg = tools.mat2dof_tensor(tfm_gt_diff_mat_tensor_normalized, degree = 'deg')
+            # print("tfm_gt_diff_mat_tensor_normalized {}".format(tfm_gt_diff_mat_tensor_normalized))
+            # matrix = tools.dof2mat_tensor_normalized(dof_rad)
+           
+            data["tfm_correction_mat_unnormalized"] = tfm_gt_diff_mat_tensor
+            data["tfm_RegS2V_initial_mat_unnormalized"] = torch.from_numpy(tfm_RegS2V_initial_np_to).type(torch.FloatTensor)
+            data["tfm_RegS2V_gt_mat_unnormalized"] = torch.from_numpy(tfm_RegS2V_gt_np_to).type(torch.FloatTensor)
 
-            tfm_gt_diff_mat = tfm_RegS2V_gt_pytorch@np.linalg.inv(tfm_RegS2V_initial_pytorch)
-            tfm_gt_diff_mat_tensor = torch.from_numpy(tfm_gt_diff_mat)
+            data["tfm_correction_mat_normalized"] = tfm_gt_diff_mat_tensor_normalized # difference normlized by affine_grid
+            data["tfm_correction_dof_normalized"] = tfm_gt_diff_dof_rad_normalized # difference normlized by affine_grid
+            data["tfm_RegS2V_initial_mat_normalized"] = tfm_RegS2V_initial_mat_tensor # difference normlized by affine_grid
+            data["tfm_RegS2V_gt_mat_normalized"] = tfm_RegS2V_gt_mat_tensor # difference normlized by affine_grid
             
-            tfm_gt_diff_dof = tools.mat2dof_np(input_mat=tfm_gt_diff_mat)
-            tfm_gt_diff_dof_tensor = torch.from_numpy(tfm_gt_diff_dof[:6])
-            
-
-            data["tfm_gt_diff_mat"] = tfm_gt_diff_mat_tensor
-            data["tfm_gt_diff_dof"] = tfm_gt_diff_dof_tensor
-            data["tfm_RegS2V_initial_mat"] = tfm_RegS2V_initial_mat_tensor
-            data["tfm_RegS2V_gt_mat"] = tfm_RegS2V_gt_mat_tensor
-
-
         return data
-
+    
 def ConvertRegS2VTransform2ITKTransform():
     """This is to convert the model ouputs (DeepRegS2V transform) to originial ITK transform"""
     return True
