@@ -115,7 +115,7 @@ batch_size = args.batch_size
 num_epochs = args.epochs
 
 project_dir = os.getcwd()
-output_dir = os.path.join(project_dir, "src/outputs_DeepS2VFF_nondrop_rot_continue")
+output_dir = os.path.join(project_dir, "src/outputs_DeepS2VFF_nondrop_rot_refined_correction")
 isExist = os.path.exists(output_dir)
 if not isExist:
     os.makedirs(output_dir)
@@ -382,7 +382,7 @@ def CreateLookupTable(cases_metadata, project_dir, phase = 'train', save_flag = 
         # print(dom.toprettyxml())
     return alldataset_LUT, volume_LUT
 
-def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_flag = True, augmented = True, create_augment_data=False):
+def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_flag = True, augmented = True, create_augment_data=False, add_refine_flag = False):
 
     project_src_dir = os.path.join(project_dir, "src")
     project_data_dir = os.path.join(project_dir, "data")
@@ -491,13 +491,22 @@ def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_fla
             correction_frame_name = "correction_" + full_frame_index+ ".tfm"
             tfm_RegS2V_initial_fileNAME = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('initial_folder').text, initial_frame_name)
             tfm_RegS2V_correction_fileNAME = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('correction_folder').text, correction_frame_name)
+            
+            if add_refine_flag:
+                correction_refine_frame_name = "correction_refine_" + full_frame_index + ".tfm"
+                tfm_RegS2V_correction_refine_fileNAME = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('correction_folder').text + "_refine_10", correction_refine_frame_name)
+
             if platform.system() == 'Linux':
                 tfm_RegS2V_initial_fileNAME = '/'.join(tfm_RegS2V_initial_fileNAME.split('\\'))
                 tfm_RegS2V_correction_fileNAME = '/'.join(tfm_RegS2V_correction_fileNAME.split('\\'))
+                if add_refine_flag:
+                    tfm_RegS2V_correction_refine_fileNAME = '/'.join(tfm_RegS2V_correction_refine_fileNAME.split('\\'))
 
             if frame_index == rangeMin:
                 # fixed_image_fileNAME_pre = fixed_image_fileNAME
                 tfm_RegS2V_correction_fileNAME_pre = tfm_RegS2V_correction_fileNAME
+                if add_refine_flag:
+                    tfm_RegS2V_correction_refine_fileNAME_pre = tfm_RegS2V_correction_refine_fileNAME
             else:
                 num_letters_frame_index_pre = len(str(frame_index-1))
                 if num_letters_frame_index_pre == 1:
@@ -517,20 +526,47 @@ def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_fla
                 tfm_RegS2V_correction_fileNAME_pre = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('correction_folder').text, correction_frame_name)
                 if platform.system() == 'Linux':
                     tfm_RegS2V_correction_fileNAME_pre = '/'.join(tfm_RegS2V_correction_fileNAME_pre.split('\\'))
-
+                if add_refine_flag:
+                    correction_refine_frame_name = "correction_" + full_frame_index_pre+ ".tfm"
+                    tfm_RegS2V_correction_refine_fileNAME_pre = os.path.join(project_data_dir, tfm_RegS2V_metadata.find('US_directory').text, tfm_RegS2V_metadata.find('correction_folder').text + "_refine_10", correction_refine_frame_name)
+                    if platform.system() == 'Linux':
+                        tfm_RegS2V_correction_refine_fileNAME_pre = '/'.join(tfm_RegS2V_correction_refine_fileNAME_pre.split('\\'))
+            
+            if add_refine_flag:
+                case_dict = {'volume_ID': case_index, 
+                         "frame_name":fixed_image_fileNAME,'frame_mask_name': fixed_image_mask_fileNAME,
+                         "tfm_RegS2V": [tfm_3DUS_CT_fileNAME, tfm_RegS2V_initial_fileNAME, tfm_RegS2V_correction_fileNAME, tfm_RegS2V_correction_fileNAME_pre, tfm_RegS2V_correction_refine_fileNAME], # add
+                         "tfm_correction_mat_normalized": None, "tfm_correction_dof_normalized": None,
+                         "tfm_correction_mat_unnormalized":None,  "tfm_correction_refine_mat_unnormalized":None, # add
+                         "tfm_RegS2V_initial_mat_normalized": None, "tfm_RegS2V_gt_mat_normalized": None,
+                         "tfm_RegS2V_initial_mat_unnormalized": None, "tfm_RegS2V_gt_mat_unnormalized": None,
+                         "frame_flip_flag": frame_flip_flag, "augment_flag": 'False',
+                         "current_frame_index": str(frame_index), "min_frame_index": str(rangeMin), "max_frame_index": str(rangeMax)}
+            else:   
+                case_dict = {'volume_ID': case_index, 
+                            "frame_name":fixed_image_fileNAME,'frame_mask_name': fixed_image_mask_fileNAME,
+                            "tfm_RegS2V": [tfm_3DUS_CT_fileNAME, tfm_RegS2V_initial_fileNAME, tfm_RegS2V_correction_fileNAME, tfm_RegS2V_correction_fileNAME_pre],
+                            "tfm_correction_mat_normalized": None, "tfm_correction_dof_normalized": None,
+                            "tfm_correction_mat_unnormalized":None,  
+                            "tfm_RegS2V_initial_mat_normalized": None, "tfm_RegS2V_gt_mat_normalized": None,
+                            "tfm_RegS2V_initial_mat_unnormalized": None, "tfm_RegS2V_gt_mat_unnormalized": None,
+                            "frame_flip_flag": frame_flip_flag, "augment_flag": 'False',
+                            "current_frame_index": str(frame_index), "min_frame_index": str(rangeMin), "max_frame_index": str(rangeMax)}
+                
                 # case_frame_pair = [case_index, frame_index, frame_index-1]
             # case_dict = {'volume_ID': case_index, 'volume_name': moving_image_fileNAME, "volume_mask_name": moving_image_mask_fileNAME, 
             #              "frame_name":fixed_image_fileNAME, "frame_name_pre": fixed_image_fileNAME_pre, 'frame_mask_name': fixed_image_mask_fileNAME,
             #              "tfm_3DUS_CT_fileNAME": tfm_3DUS_CT_fileNAME, "tfm_RegS2V_initial_fileNAME": tfm_RegS2V_initial_fileNAME, "tfm_RegS2V_correction_fileNAME": tfm_RegS2V_correction_fileNAME, 
             #              "tfm_RegS2V_correction_fileNAME_pre": tfm_RegS2V_correction_fileNAME_pre}
-            case_dict = {'volume_ID': case_index, 
-                         "frame_name":fixed_image_fileNAME,'frame_mask_name': fixed_image_mask_fileNAME,
-                         "tfm_RegS2V": [tfm_3DUS_CT_fileNAME, tfm_RegS2V_initial_fileNAME, tfm_RegS2V_correction_fileNAME, tfm_RegS2V_correction_fileNAME_pre],
-                         "tfm_correction_mat_normalized": None, "tfm_correction_dof_normalized": None,
-                         "tfm_correction_mat_unnormalized":None,  
-                         "tfm_RegS2V_initial_mat_normalized": None, "tfm_RegS2V_gt_mat_normalized": None,
-                         "tfm_RegS2V_initial_mat_unnormalized": None, "tfm_RegS2V_gt_mat_unnormalized": None,
-                         "frame_flip_flag": frame_flip_flag, "augment_flag": 'False'}
+                
+            # case_dict = {'volume_ID': case_index, 
+            #              "frame_name":fixed_image_fileNAME,'frame_mask_name': fixed_image_mask_fileNAME,
+            #              "tfm_RegS2V": [tfm_3DUS_CT_fileNAME, tfm_RegS2V_initial_fileNAME, tfm_RegS2V_correction_fileNAME, tfm_RegS2V_correction_fileNAME_pre],
+            #              "tfm_correction_mat_normalized": None, "tfm_correction_dof_normalized": None,
+            #              "tfm_correction_mat_unnormalized":None,  
+            #              "tfm_RegS2V_initial_mat_normalized": None, "tfm_RegS2V_gt_mat_normalized": None,
+            #              "tfm_RegS2V_initial_mat_unnormalized": None, "tfm_RegS2V_gt_mat_unnormalized": None,
+            #              "frame_flip_flag": frame_flip_flag, "augment_flag": 'False'}
             if augmented:
                 if phase == "train":
                     if case_index < 15:
@@ -565,13 +601,14 @@ def CreateLookupTable_new(cases_metadata, project_dir, phase = 'train', save_fla
     return alldataset_LUT, volume_LUT
 
 class LoadRegistrationTransformd(MapTransform):
-    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False, scale = 1, volume_size = None, loading_data = False, step_size = 2) -> None:
+    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False, scale = 1, volume_size = None, loading_data = False, step_size = 2, add_refine_flag = False) -> None:
         super().__init__(keys, allow_missing_keys)
         self.keys = keys
         self.scale = scale
         self.volume_size = volume_size #"W*H*D"
         self.loading_data = loading_data
         self.step_size = step_size
+        self.add_refine_flag = add_refine_flag
         
     def __call__(self, data):
         """Keys tfm_3DUS_CT_fileNAME: ["tfm_3DUS_CT_fileNAME", "tfm_RegS2V_initial_fileNAME", "tfm_RegS2V_correction_fileNAME", "tfm_RegS2V_correction_fileNAME_pre"]""" 
@@ -591,8 +628,13 @@ class LoadRegistrationTransformd(MapTransform):
             tfm_RegS2V_correction_np = ConvertITKTransform2NumpyArray(tfm_RegS2V_correction) # from parent
             # print("tfm_RegS2V_correction", np.linalg.inv(tfm_RegS2V_correction_np))
             
+            if self.add_refine_flag:
+                tfm_RegS2V_correction_refine = sitk.ReadTransform(data[key][4]) # transform (from parent) LPS
+                tfm_RegS2V_correction_refine_np_from = ConvertITKTransform2NumpyArray(tfm_RegS2V_correction_refine) # from parent
+                tfm_RegS2V_correction_refine_np_to = np.linalg.inv(tfm_RegS2V_correction_refine_np_from)
+
             """add fake scaling and translation, this is for training. since the networks don't support to identify the spacing of the data array, we rescaled the data to spacing 1"""
-            T_scale = np.array([[self.scale, 0, 0, 0], [0, self.scale, 0, 0], [0, 0, self.scale, 0], [0, 0, 0, 1]]) # LPS to parent
+            T_scale = np.array([[self.scale, 0, 0, 0], [0, self.scale, 0, 0], [0, 0, self.scale, 0], [0, 0, 0, 1]]).astype(float)  # LPS to parent
             T_scale_inv = np.linalg.inv(T_scale)
             frame_fileNAME = data["frame_name"]
             # print(frame_fileNAME)
@@ -602,7 +644,7 @@ class LoadRegistrationTransformd(MapTransform):
             reader.ReadImageInformation()
             spacing = reader.GetSpacing()
             size = reader.GetSize()
-            T_translate = np.array([[1, 0, 0, 0], [0, 1, 0, -spacing[1]*size[1]*0.5], [0, 0, 1, 0], [0, 0, 0, 1]]) # LPS to parent
+            T_translate = np.array([[1, 0, 0, 0], [0, 1, 0, -spacing[1]*size[1]*0.5], [0, 0, 1, 0], [0, 0, 0, 1]]).astype(float)  # LPS to parent
             # print(T_translate)
 
             """original transform_ITK (ground truth)"""
@@ -635,11 +677,13 @@ class LoadRegistrationTransformd(MapTransform):
                 if self.loading_data:
                     # print("frame_name: ", data[key][3])
                     transform_dof_noise = augmentation_dof_data[loading_data_index]
-                    loading_data_index = loading_data_index+ self.step_size
+                    loading_data_index = loading_data_index + self.step_size
                 else:
                     """adding noise translation: N(mean = 0, std = 3), rotation: N(mean = 0, std = 3)"""
-                    translation_dof_noise = np.array([np.random.uniform(-10, 10), np.random.uniform(-10, 10), np.random.uniform(-5, 5)])
-                    rotation_dof_noise = np.array([np.random.uniform(-5, 5), np.random.uniform(-5, 5), np.random.uniform(-10, 10)])
+                    # translation_dof_noise = np.array([np.random.uniform(-10, 10), np.random.uniform(-10, 10), np.random.uniform(-5, 5)])
+                    # rotation_dof_noise = np.array([np.random.uniform(-5, 5), np.random.uniform(-5, 5), np.random.uniform(-10, 10)])
+                    translation_dof_noise = np.array([np.random.uniform(-5, 5), np.random.uniform(-5, 5), np.random.uniform(-5, 5)])
+                    rotation_dof_noise = np.array([np.random.uniform(-5, 5), np.random.uniform(-5, 5), np.random.uniform(-5, 5)])
                     transform_dof_noise = np.concatenate((translation_dof_noise, rotation_dof_noise), axis =0)
                     transform_dof_noise = np.expand_dims(transform_dof_noise, axis=0)
                     
@@ -698,7 +742,9 @@ class LoadRegistrationTransformd(MapTransform):
             # dof_deg = tools.mat2dof_tensor(tfm_gt_diff_mat_tensor_normalized, degree = 'deg')
             # print("tfm_gt_diff_mat_tensor_normalized {}".format(tfm_gt_diff_mat_tensor_normalized))
             # matrix = tools.dof2mat_tensor_normalized(dof_rad)
-           
+            if self.add_refine_flag:
+                data["tfm_correction_refine_mat_unnormalized"] = torch.from_numpy(tfm_RegS2V_correction_refine_np_to).type(torch.FloatTensor)
+
             data["tfm_correction_mat_unnormalized"] = tfm_gt_diff_mat_tensor
             data["tfm_RegS2V_initial_mat_unnormalized"] = torch.from_numpy(tfm_RegS2V_initial_np_to).type(torch.FloatTensor)
             data["tfm_RegS2V_gt_mat_unnormalized"] = torch.from_numpy(tfm_RegS2V_gt_np_to).type(torch.FloatTensor)
@@ -709,6 +755,10 @@ class LoadRegistrationTransformd(MapTransform):
             data["tfm_RegS2V_gt_mat_normalized"] = tfm_RegS2V_gt_mat_tensor # difference normlized by affine_grid
             
         return data
+
+
+
+
 
 def transform_conversion_pytorch_to_ITK(affine_transform_pytorch_initial, affine_transform_pytorch_correction, volume_size):
     #note: affine_transform_ITK (to parent)
@@ -726,13 +776,13 @@ def transform_conversion_pytorch_to_original_ITK(affine_transform_pytorch_initia
     """ to calucate the affine_transorm_ITK, when you get the output from our network"""
     """our network is to cacluate the correction transform, assuming we already have a good iniital transform (affine_transform_ITK_initial)"""
     affine_transform_pytorch = affine_transform_pytorch_correction@affine_transform_pytorch_initial
-    T_normalized = np.array([[2/volume_size[0], 0, 0, 0], [0, 2/volume_size[1], 0, 0], [0, 0, 2/volume_size[2], 0], [0, 0, 0, 1]]) # LPS to parent
+    T_normalized = np.array([[2/volume_size[0], 0, 0, 0], [0, 2/volume_size[1], 0, 0], [0, 0, 2/volume_size[2], 0], [0, 0, 0, 1]]).astype(float) 
     affine_transform_ITK = np.linalg.inv(T_normalized) @ affine_transform_pytorch @ T_normalized
     
-    T_scale = np.array([[scale, 0, 0, 0], [0, scale, 0, 0], [0, 0, scale, 0], [0, 0, 0, 1]]) # LPS to parent
+    T_scale = np.array([[scale, 0, 0, 0], [0, scale, 0, 0], [0, 0, scale, 0], [0, 0, 0, 1]]).astype(float) # LPS to parent
     T_scale_inv = np.linalg.inv(T_scale)
     
-    T_translate = np.array([[1, 0, 0, 0], [0, 1, 0, -frame_spacing[1]*frame_size[1]*0.5], [0, 0, 1, 0], [0, 0, 0, 1]]) # LPS to parent
+    T_translate = np.array([[1, 0, 0, 0], [0, 1, 0, -frame_spacing[1]*frame_size[1]*0.5], [0, 0, 1, 0], [0, 0, 0, 1]]).astype(float) # LPS to parent
     T_translate_inv = np.linalg.inv(T_translate)
     #tfm_RegS2V_gt_np_to = T_scale@T_translate@tfm_RegS2V_gt_np_to@T_scale_inv
     affine_transform_original_ITK = T_translate_inv@T_scale_inv@affine_transform_ITK@T_scale
@@ -772,7 +822,7 @@ def transform_conversion_ITK_to_pytorch(affine_transform_ITK, volume_size):
     affine_transform_inverse = np.linalg.inv(affine_transform_ITK) # for the grid_sampling, the transform is inversed
     """transform_scipy -> transform_pytorch"""
     # T_normalized = np.array([[2/volume_size[0], 0, 0, -1], [0, 2/volume_size[1], 0, -1], [0, 0, 2/volume_size[2], -1], [0, 0, 0, 1]]) # LPS to parent
-    T_normalized = np.array([[2/volume_size[0], 0, 0, 0], [0, 2/volume_size[1], 0, 0], [0, 0, 2/volume_size[2], 0], [0, 0, 0, 1]]) # LPS to parent
+    T_normalized = np.array([[2/volume_size[0], 0, 0, 0], [0, 2/volume_size[1], 0, 0], [0, 0, 2/volume_size[2], 0], [0, 0, 0, 1]]).astype(float) # LPS to parent
     affine_transform_pytorch = T_normalized @ affine_transform_inverse @ np.linalg.inv(T_normalized)
     
     return affine_transform_pytorch # 4 by 4
@@ -1254,7 +1304,8 @@ def train_model_rot_representation(model, training_dataset_frame, training_datas
                         trans_correction_estimated_unnormalized_inv = rt_mat_unnormalized_inv[:, 0:3, 3]
 
                         """correction_matrix ground truth (unnormalized)"""
-                        tfm_correction_unnormalized = batch["tfm_correction_mat_unnormalized"].type(torch.FloatTensor)
+                        # tfm_correction_unnormalized = batch["tfm_correction_mat_unnormalized"].type(torch.FloatTensor)
+                        tfm_correction_unnormalized = batch["tfm_correction_refine_mat_unnormalized"].type(torch.FloatTensor)
                         tfm_correction_unnormalized = tfm_correction_unnormalized.to(device)
                         tfm_correction_unnormalized_inv = torch.linalg.inv(tfm_correction_unnormalized)
                         rotm_correction_gt_unnormalized_inv = tfm_correction_unnormalized_inv[:, 0:3, 0:3]
@@ -1268,6 +1319,7 @@ def train_model_rot_representation(model, training_dataset_frame, training_datas
                         # translation_loss = 0
                         """image intensity-based loss (localNCC)"""
                         frame_estimated = vol_resampled[:,:, int(volume_size[3]*0.5), :, :].to(device)
+                        
                         
                         """visualize the initialized images"""
                         # frame_est_np = torch.Tensor.numpy(vol_resampled[:,:, int(volume_size[3]*0.5), :, :].detach().cpu())
@@ -1385,7 +1437,8 @@ def train_model_rot_representation(model, training_dataset_frame, training_datas
                         rotm_correction_estimated_unnormalized = rt_mat_unnormalized[:, 0:3, 0:3]
                         trans_correction_estimated_unnormalized = rt_mat_unnormalized[:, 0:3, 3]
 
-                        tfm_correction_unnormalized = batch["tfm_correction_mat_unnormalized"].type(torch.FloatTensor)
+                        # tfm_correction_unnormalized = batch["tfm_correction_mat_unnormalized"].type(torch.FloatTensor)
+                        tfm_correction_unnormalized = batch["tfm_correction_refine_mat_unnormalized"].type(torch.FloatTensor)
                         tfm_correction_unnormalized = tfm_correction_unnormalized.to(device)
                         rotm_correction_gt_unnormalized = tfm_correction_unnormalized[:, 0:3, 0:3]
                         trans_correction_gt_unnormalized = tfm_correction_unnormalized[:, 0:3, 3]
@@ -1458,8 +1511,8 @@ def train_model_rot_representation(model, training_dataset_frame, training_datas
                     lowest_loss = epoch_loss
                     best_ep = epoch
                     print('**** best model updated with loss={:.4f} ****'.format(lowest_loss))
-                if epoch%1 == 0 and epoch != 0:
-                    fn_save = path.join(output_dir, '{}_{}_b2_weaksuper_continue.pth'.format(trained_model_list[str(TRAINED_MODEL)], epoch+103))
+                if epoch%2 == 0 and epoch != 0:
+                    fn_save = path.join(output_dir, '{}_{}_refine_correction.pth'.format(trained_model_list[str(TRAINED_MODEL)], epoch))
                     torch.save(model.state_dict(), fn_save)
                 
                 # torch.cuda.empty_cache()    
@@ -2377,8 +2430,6 @@ def train_nondeep_model(dataset_frame, dataset_volume, frame_index, visualize = 
 
 if __name__ == '__main__':
     
-    
-
     """load dataset setting file and create the dictionary"""
     
     # project_dir = 'E:\PROGRAM\Project_PhD\Registration\DeepRegS2V'
@@ -2396,7 +2447,8 @@ if __name__ == '__main__':
 
     loading_data = True
     if loading_data:
-        augmentation_dof_data = np.load("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_nondrop_continue/augmentation_dof_data.npy")
+        # augmentation_dof_data = np.load("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_simplified_nondrop_continue/augmentation_dof_data.npy")
+        augmentation_dof_data = np.load("/home/UWO/xshuwei/DeepRegS2V/src/augmentation_dof_data_new.npy")
         loading_data_index = 0
     else:
         augmentation_dof_data = np.zeros([1, 6]) # global variable
@@ -2404,10 +2456,11 @@ if __name__ == '__main__':
     # alldataset_dict, volume_dict = CreateLookupTable(all_cases_metadata, save_flag=True)
     # training_dataset_dict, training_volume_dict = CreateLookupTable(training_cases_metadata,project_dir= project_dir, phase= "train", save_flag=True)
     # validation_dataset_dict, validation_volume_dict = CreateLookupTable(validation_cases_metadata, project_dir= project_dir, phase= "val", save_flag=True)
-    training_dataset_dict, training_volume_dict = CreateLookupTable_new(training_cases_metadata,project_dir= project_dir, phase= "train", save_flag=True, augmented=True, create_augment_data=False)
-    validation_dataset_dict, validation_volume_dict = CreateLookupTable_new(validation_cases_metadata, project_dir= project_dir, phase= "val", save_flag=True, augmented=False, create_augment_data=False)
+    training_dataset_dict, training_volume_dict = CreateLookupTable_new(training_cases_metadata,project_dir= project_dir, phase= "train", save_flag=True, augmented=True, create_augment_data=False, add_refine_flag=True)
+    validation_dataset_dict, validation_volume_dict = CreateLookupTable_new(validation_cases_metadata, project_dir= project_dir, phase= "val", save_flag=True, augmented=False, create_augment_data=False, add_refine_flag=True)
 
     
+
     """preprocessing the dataset(volume data, 2D US frame data and transformation data)"""
     # """preprocessing: setting 1"""
     # resample_spacing = 0.5
@@ -2438,7 +2491,7 @@ if __name__ == '__main__':
 
     transform_2DUS = Compose(
         [
-            LoadRegistrationTransformd(keys=["tfm_RegS2V"], scale=resize_scale, volume_size=volume_size, loading_data=loading_data, step_size=2), # step_size only consider when loading data
+            LoadRegistrationTransformd(keys=["tfm_RegS2V"], scale=resize_scale, volume_size=volume_size, loading_data=loading_data, step_size=2, add_refine_flag=True), # step_size only consider when loading data
             LoadImaged(keys=["frame_name", "frame_mask_name"], reader=ITKReader(reverse_indexing=False, affine_lps_to_ras=False), image_only=False),
             # MaskIntensityd(keys=["image","image_mask"], mask_data= mask_image_array),
             MaskIntensityd(keys=["frame_name", "frame_mask_name"], mask_key= "frame_mask_name"),
@@ -2463,17 +2516,19 @@ if __name__ == '__main__':
         print("augmentation_dof_data: {}".format(augmentation_dof_data))
         augmentation_dof_data = np.delete(augmentation_dof_data, (0), axis=0)
         
-        np.save(os.path.join(output_dir, 'augmentation_dof_data'), augmentation_dof_data) 
+        np.save(os.path.join(output_dir, 'augmentation_dof_data_new'), augmentation_dof_data) 
 
+    # sys.exit()
     
+
     if DEEP_MODEL:
         training_dataloader_2DUS = DataLoader(dataset=training_dataset_2DUS, batch_size=batch_size, shuffle=True)
         validation_dataloader_2DUS = DataLoader(dataset=validation_dataset_2DUS, batch_size=batch_size, shuffle=False)
         # print("number of cases: ", len(training_dataset_2DUS))
         # sys.exit()
-        num_cases = {'train': len(training_dataset_2DUS), 'val': len(validation_dataset_2DUS)}
         
-        save_info(num_cases)
+        num_cases = {'train': len(training_dataset_2DUS), 'val': len(validation_dataset_2DUS)}
+        save_info(num_cases=num_cases)
         # Define the training model architecture
         if TRAINED_MODEL == 1:
             model = RegS2Vnet.mynet3(layers=[3, 8, 36, 3]).to(device=device)
@@ -2534,7 +2589,8 @@ if __name__ == '__main__':
             model = RegS2Vnet.RegS2Vnet_featurefusion_nondrop_rot(mode = 'ortho6d', normalization = False).to(device=device)
             if RESUME_MODEL:
                 # pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_nondrop_rot", 'DeepS2VFF_nodrop_rot_490_b2_weaksuper.pth') # 
-                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_nondrop_rot_continue", 'DeepS2VFF_nodrop_rot_103_b2_weaksuper_continue.pth') # 
+                # pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_nondrop_rot_continue", 'DeepS2VFF_nodrop_rot_103_b2_weaksuper_continue.pth') # 
+                pretrained_model = path.join("/home/UWO/xshuwei/DeepRegS2V/src/outputs_DeepS2VFF_nondrop_rot_continue", 'DeepS2VFF_nodrop_rot_347_b2_weaksuper_continue.pth') # 
                 model.load_state_dict(torch.load(pretrained_model, map_location=device))
                 print("RESUME model: {}".format(pretrained_model))
             tv_hist = train_model_rot_representation(model=model, training_dataset_frame=training_dataloader_2DUS, training_dataset_volume = training_dataset_3DUS, validation_dataset_frame = validation_dataloader_2DUS, validation_dateset_volume = validation_dataset_3DUS, num_cases= num_cases)
