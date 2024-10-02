@@ -3,6 +3,21 @@
 
 <p align="center"><img src="figs/registration_workflow_CT_MRI_new.png" width="700px"/></p>
 
+# Citation
+If you want to use our code for your research, please cite our publication.
+```
+@article{xing20233d,
+  title={3D US-CT/MRI registration for percutaneous focal liver tumor ablations},
+  author={Xing, Shuwei and Romero, Joeana Cambranis and Roy, Priyanka and Cool, Derek W and Tessier, David and Chen, Elvis CS and Peters, Terry M and Fenster, Aaron},
+  journal={International Journal of Computer Assisted Radiology and Surgery},
+  volume={18},
+  number={7},
+  pages={1159--1166},
+  year={2023},
+  publisher={Springer}
+}
+```
+
 ## Introduction
 TODO
 
